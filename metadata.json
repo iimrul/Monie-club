@@ -1,0 +1,6 @@
+{
+  "name": "Monie Club Fund & Venture Manager",
+  "description": "Comprehensive treasury, monthly dues, member ledger, and business investment tracking platform for Monie Club.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,66 @@
+{
+  "entities": {
+    "members": {
+      "title": "Member",
+      "description": "Club members and their subscription units",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "units": { "type": "number" },
+        "contactNumber": { "type": "string" },
+        "bloodGroup": { "type": "string" },
+        "permanentAddress": { "type": "string" },
+        "status": { "type": "string" },
+        "monthsPending": { "type": "number" },
+        "totalDueAmount": { "type": "number" },
+        "registrationFeePaid": { "type": "number" }
+      }
+    },
+    "monthlyPayments": {
+      "title": "Monthly Payment",
+      "description": "Monthly subscription payment ledgers",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "memberId": { "type": "string" },
+        "memberName": { "type": "string" },
+        "monthKey": { "type": "string" },
+        "amountExpected": { "type": "number" },
+        "amountPaid": { "type": "number" },
+        "status": { "type": "string" },
+        "paymentMethod": { "type": "string" }
+      }
+    },
+    "investments": {
+      "title": "Business Investment",
+      "description": "Venture capital investments",
+      "type": "object"
+    },
+    "expenses": {
+      "title": "Expense Record",
+      "description": "Operational club expenses",
+      "type": "object"
+    },
+    "feeCollections": {
+      "title": "Fee Collection",
+      "description": "Membership and registration fees",
+      "type": "object"
+    },
+    "pendingClaims": {
+      "title": "Pending Payment Claim",
+      "description": "Member payment claims awaiting treasurer verification",
+      "type": "object"
+    },
+    "adminUsers": {
+      "title": "Admin User",
+      "description": "Admin accounts with RBAC",
+      "type": "object"
+    },
+    "clubConfig": {
+      "title": "Club Config",
+      "description": "Central club funds and months configuration",
+      "type": "object"
+    }
+  }
+}
