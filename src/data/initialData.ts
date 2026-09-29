@@ -178,8 +178,8 @@ export const INITIAL_MEMBERS: Member[] = [
     bloodGroup: 'N/A',
     permanentAddress: 'Padua, Lohagara, Chattogram',
     status: 'Active',
-    monthsPending: 0,
-    totalDueAmount: 0,
+    monthsPending: 1,
+    totalDueAmount: 1000,
     registrationFeePaid: 100,
     registrationDate: '2026-01-07',
   },
@@ -193,7 +193,7 @@ export const INITIAL_MEMBERS: Member[] = [
     status: 'Active',
     monthsPending: 2,
     totalDueAmount: 2000,
-    registrationFeePaid: 100,
+    registrationFeePaid: 0,
     registrationDate: '2026-01-15',
   },
   {
@@ -219,7 +219,7 @@ export const INITIAL_MEMBERS: Member[] = [
     status: 'Active',
     monthsPending: 6,
     totalDueAmount: 6000,
-    registrationFeePaid: 100,
+    registrationFeePaid: 0,
     registrationDate: '2026-01-15',
   },
   {
@@ -230,8 +230,8 @@ export const INITIAL_MEMBERS: Member[] = [
     bloodGroup: 'O+',
     permanentAddress: 'Padua, Lohagara, Chattogram',
     status: 'Active',
-    monthsPending: 2,
-    totalDueAmount: 2000,
+    monthsPending: 1,
+    totalDueAmount: 1000,
     registrationFeePaid: 100,
     registrationDate: '2025-12-09',
   },
@@ -304,74 +304,24 @@ export const MONTHS_CONFIG: { key: MonthKey; label: string; yearMonth: string }[
 ];
 
 export const INITIAL_INVESTMENT: BusinessInvestment = {
-  id: 'inv-1',
-  title: 'Six-Month Commercial Trade & Business Venture',
-  principalAmount: 200000,
-  sourceFund: 'Monie Club Treasury (Allocated from 3.81 Lakh Total Funds)',
-  startDate: '2026-04-15',
-  maturityDate: '2026-10-31',
-  durationMonths: 6,
-  expectedProfit: 17000,
-  totalExpectedReturn: 217000,
-  status: 'Active',
-  partnerOrVenture: 'Chittagong Agro-Commodity & Wholesale Trade Venture',
-  contactPerson: 'Investment Committee / Representative Partner',
-  description: 'Capital deployment of ৳2,00,000 for a 6-month seasonal commercial trade venture concluding in October 2026. Delivers a targeted profit of ৳17,000, bringing total repayment to ৳2,17,000 upon October conclusion.',
+  id: 'inv-none',
+  title: 'No Active Venture',
+  principalAmount: 0,
+  sourceFund: 'Monie Club Treasury',
+  startDate: '',
+  maturityDate: '',
+  durationMonths: 0,
+  expectedProfit: 0,
+  totalExpectedReturn: 0,
+  status: 'Completed',
+  partnerOrVenture: 'None',
+  contactPerson: '',
+  description: 'No active business investment currently deployed.',
   dividendPolicy: 'Distribute to Members per Unit',
-  milestones: [
-    {
-      id: 'ms-1',
-      title: 'Venture Capital Disbursement',
-      date: '2026-04-15',
-      completed: true,
-      notes: '৳2,00,000 transferred from Monie Club account to trade partner.',
-    },
-    {
-      id: 'ms-2',
-      title: 'Quarterly Trade Progress Audit',
-      date: '2026-07-15',
-      completed: true,
-      notes: 'Inventory turnover verified, trade proceeds in good standing.',
-    },
-    {
-      id: 'ms-3',
-      title: 'Pre-Maturity Settlement Notice',
-      date: '2026-09-30',
-      completed: false,
-      notes: 'Finalize liquidation of inventory and reconciliation of accounts.',
-    },
-    {
-      id: 'ms-4',
-      title: 'Principal & Profit Settlement',
-      date: '2026-10-31',
-      completed: false,
-      notes: 'Full recovery of ৳2,00,000 principal + ৳17,000 profit distribution to members.',
-    },
-  ],
+  milestones: [],
 };
 
-export const INITIAL_INVESTMENTS: BusinessInvestment[] = [
-  INITIAL_INVESTMENT,
-  {
-    id: 'inv-prev-1',
-    title: 'Short-Term Grain & Agro Commodity Procurement',
-    principalAmount: 150000,
-    sourceFund: 'Monie Club Treasury',
-    startDate: '2025-10-15',
-    maturityDate: '2026-03-31',
-    concludedDate: '2026-03-31',
-    durationMonths: 5,
-    expectedProfit: 12500,
-    actualProfit: 12500,
-    totalExpectedReturn: 162500,
-    status: 'Inactive',
-    partnerOrVenture: 'North Chittagong Agro Traders',
-    contactPerson: 'Representative Partner',
-    description: 'Procurement and seasonal distribution of grain commodities. Concluded on 31 March 2026 with full principal and ৳12,500 profit recovered.',
-    dividendPolicy: 'Reinvest into Club Fund',
-    notes: 'Concluded & Settled: ৳1,50,000 capital + ৳12,500 profit successfully credited to club fund.',
-  },
-];
+export const INITIAL_INVESTMENTS: BusinessInvestment[] = [];
 
 export const INITIAL_EXPENSES: ExpenseRecord[] = [
   {
@@ -485,11 +435,11 @@ export function generateInitialMonthlyPayments(): MonthlyPayment[] {
     m11: [],
     m12: [],
     m13: ['2026-08', '2026-09'],
-    m14: [],
+    m14: ['2026-09'],
     m15: ['2026-08', '2026-09'],
     m16: ['2026-07', '2026-08', '2026-09'],
     m17: ['2026-04', '2026-05', '2026-06', '2026-07', '2026-08', '2026-09'],
-    m18: ['2026-08', '2026-09'],
+    m18: ['2026-09'],
   };
 
   const defaultMethods: Record<string, string> = {
@@ -567,50 +517,7 @@ export const INITIAL_ADMINS: import('../types').AdminUser[] = [
   },
 ];
 
-export const INITIAL_BANK_PROFITS: import('../types').BankProfitRecord[] = [
-  {
-    id: 'bp-1',
-    amount: 3250,
-    date: '2026-06-30',
-    bankName: 'Club Account (IBBL)',
-    description: 'Half-yearly bank profit / interest credit',
-    recordedBy: 'Imrul Kaesh Chowdhury (Treasurer)',
-    receiptOrVoucher: 'BP-2026-06',
-    notes: 'Bank profit credited to club account, adding to total club cash reserves.',
-    createdAt: '2026-06-30T10:00:00.000Z',
-  },
-];
+export const INITIAL_BANK_PROFITS: import('../types').BankProfitRecord[] = [];
 
-export const INITIAL_CLAIMS: import('../types').PendingPaymentClaim[] = [
-  {
-    id: 'claim_1',
-    memberId: 'm1',
-    memberName: 'Saiful Islam Robin',
-    memberMobile: '01863269888',
-    monthKey: '2026-09',
-    monthLabel: 'September 2026',
-    units: 5,
-    amount: 5000,
-    paymentMethod: 'Bkash',
-    trxId: 'BK9X2491LA',
-    notes: 'Paid subscription dues via bKash personal',
-    submittedAt: '2026-09-24T14:32:00.000Z',
-    status: 'Pending',
-  },
-  {
-    id: 'claim_2',
-    memberId: 'm4',
-    memberName: 'Mimoun Uddin Kader Tamim',
-    memberMobile: '01872553338',
-    monthKey: '2026-09',
-    monthLabel: 'September 2026',
-    units: 2,
-    amount: 2000,
-    paymentMethod: 'CellFin',
-    trxId: 'CF88204918',
-    notes: 'Transferred from CellFin wallet',
-    submittedAt: '2026-09-25T10:15:00.000Z',
-    status: 'Pending',
-  },
-];
+export const INITIAL_CLAIMS: import('../types').PendingPaymentClaim[] = [];
 

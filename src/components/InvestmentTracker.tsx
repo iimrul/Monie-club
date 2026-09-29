@@ -37,6 +37,11 @@ export const InvestmentTracker: React.FC = () => {
     title: string;
     partnerOrVenture: string;
     principalAmount: number;
+    profitMode: 'range' | 'fixed';
+    minRoiPercent: number;
+    maxRoiPercent: number;
+    minProfit: number;
+    maxProfit: number;
     expectedProfit: number;
     startDate: string;
     maturityDate: string;
@@ -48,8 +53,13 @@ export const InvestmentTracker: React.FC = () => {
   }>({
     title: '',
     partnerOrVenture: '',
-    principalAmount: 200000,
-    expectedProfit: 17000,
+    principalAmount: 100000,
+    profitMode: 'range',
+    minRoiPercent: 10,
+    maxRoiPercent: 12.5,
+    minProfit: 10000,
+    maxProfit: 12500,
+    expectedProfit: 12500,
     startDate: new Date().toISOString().split('T')[0],
     maturityDate: '2026-10-31',
     durationMonths: 6,
@@ -78,16 +88,28 @@ export const InvestmentTracker: React.FC = () => {
   const activeVentures = useMemo(() => investments.filter(i => i.status === 'Active'), [investments]);
   const inactiveVentures = useMemo(() => investments.filter(i => i.status === 'Inactive'), [investments]);
 
-  // Total active deployment metrics
+  // Total active deployment metrics (supports Dynamic Range & Fixed)
   const totalActivePrincipal = useMemo(() => {
     return activeVentures.reduce((sum, i) => sum + i.principalAmount, 0);
   }, [activeVentures]);
 
-  const totalActiveProfit = useMemo(() => {
-    return activeVentures.reduce((sum, i) => sum + i.expectedProfit, 0);
+  const totalActiveMinProfit = useMemo(() => {
+    return activeVentures.reduce((sum, i) => {
+      if (i.profitMode === 'range' && i.minProfit !== undefined) return sum + i.minProfit;
+      if (i.minRoiPercent !== undefined) return sum + (i.principalAmount * i.minRoiPercent) / 100;
+      return sum + i.expectedProfit;
+    }, 0);
   }, [activeVentures]);
 
-  const totalActiveReturn = totalActivePrincipal + totalActiveProfit;
+  const totalActiveMaxProfit = useMemo(() => {
+    return activeVentures.reduce((sum, i) => {
+      if (i.profitMode === 'range' && i.maxProfit !== undefined) return sum + i.maxProfit;
+      if (i.maxRoiPercent !== undefined) return sum + (i.principalAmount * i.maxRoiPercent) / 100;
+      return sum + i.expectedProfit;
+    }, 0);
+  }, [activeVentures]);
+
+  const hasActiveProfitRange = totalActiveMinProfit !== totalActiveMaxProfit;
 
   // Total concluded return recovered
   const totalConcludedReturn = useMemo(() => {
@@ -114,20 +136,37 @@ export const InvestmentTracker: React.FC = () => {
   const activeMembers = useMemo(() => members.filter(m => m.status === 'Active'), [members]);
   const totalActiveUnits = summary.totalActiveUnits || 44;
 
-  const currentProfitBase = inspectedVenture 
-    ? (inspectedVenture.status === 'Inactive' && inspectedVenture.actualProfit !== undefined 
-        ? inspectedVenture.actualProfit 
-        : inspectedVenture.expectedProfit) 
+  const inspectedIsConcluded = inspectedVenture?.status === 'Inactive' && inspectedVenture?.actualProfit !== undefined;
+  const inspectedIsRange = !inspectedIsConcluded && inspectedVenture && (inspectedVenture.profitMode === 'range' || (inspectedVenture.minRoiPercent !== undefined && inspectedVenture.maxRoiPercent !== undefined));
+
+  const inspectedMinProfit = inspectedVenture
+    ? (inspectedIsConcluded 
+        ? inspectedVenture.actualProfit! 
+        : (inspectedVenture.minProfit ?? (inspectedVenture.minRoiPercent ? (inspectedVenture.principalAmount * inspectedVenture.minRoiPercent) / 100 : inspectedVenture.expectedProfit)))
     : 0;
 
-  const distributable = payoutOption === 'reinvest' 
+  const inspectedMaxProfit = inspectedVenture
+    ? (inspectedIsConcluded 
+        ? inspectedVenture.actualProfit! 
+        : (inspectedVenture.maxProfit ?? (inspectedVenture.maxRoiPercent ? (inspectedVenture.principalAmount * inspectedVenture.maxRoiPercent) / 100 : inspectedVenture.expectedProfit)))
+    : 0;
+
+  const distributableMin = payoutOption === 'reinvest' 
     ? 0 
     : payoutOption === 'split' 
-      ? currentProfitBase * 0.5 
-      : currentProfitBase;
+      ? inspectedMinProfit * 0.5 
+      : inspectedMinProfit;
 
-  const perUnitShare = totalActiveUnits > 0 ? (distributable / totalActiveUnits) : 0;
-  const retainedClub = currentProfitBase - distributable;
+  const distributableMax = payoutOption === 'reinvest' 
+    ? 0 
+    : payoutOption === 'split' 
+      ? inspectedMaxProfit * 0.5 
+      : inspectedMaxProfit;
+
+  const perUnitMin = totalActiveUnits > 0 ? (distributableMin / totalActiveUnits) : 0;
+  const perUnitMax = totalActiveUnits > 0 ? (distributableMax / totalActiveUnits) : 0;
+  const retainedClubMin = inspectedMinProfit - distributableMin;
+  const retainedClubMax = inspectedMaxProfit - distributableMax;
 
   // ---------------------------------------------------------------------------
   // Action Handlers
@@ -144,7 +183,12 @@ export const InvestmentTracker: React.FC = () => {
       title: '',
       partnerOrVenture: '',
       principalAmount: 100000,
-      expectedProfit: 10000,
+      profitMode: 'range',
+      minRoiPercent: 10,
+      maxRoiPercent: 12.5,
+      minProfit: 10000,
+      maxProfit: 12500,
+      expectedProfit: 12500,
       startDate: new Date().toISOString().split('T')[0],
       maturityDate: '',
       durationMonths: 6,
@@ -164,10 +208,22 @@ export const InvestmentTracker: React.FC = () => {
       return;
     }
     setEditingVentureId(v.id);
+    const p = v.principalAmount || 100000;
+    const isRange = v.profitMode === 'range' || (v.minRoiPercent !== undefined && v.maxRoiPercent !== undefined);
+    const minRoi = v.minRoiPercent ?? (v.expectedProfit && p ? Number(((v.expectedProfit / p) * 100).toFixed(1)) : 10);
+    const maxRoi = v.maxRoiPercent ?? (v.expectedProfit && p ? Number(((v.expectedProfit / p) * 100).toFixed(1)) : 12.5);
+    const minProf = v.minProfit ?? Math.round((p * minRoi) / 100);
+    const maxProf = v.maxProfit ?? Math.round((p * maxRoi) / 100);
+
     setVentureForm({
       title: v.title,
       partnerOrVenture: v.partnerOrVenture || '',
-      principalAmount: v.principalAmount,
+      principalAmount: p,
+      profitMode: isRange ? 'range' : 'fixed',
+      minRoiPercent: minRoi,
+      maxRoiPercent: maxRoi,
+      minProfit: minProf,
+      maxProfit: maxProf,
       expectedProfit: v.expectedProfit,
       startDate: v.startDate,
       maturityDate: v.maturityDate || '',
@@ -180,14 +236,58 @@ export const InvestmentTracker: React.FC = () => {
     setIsModalOpen(true);
   };
 
+  const handlePrincipalOrRoiChange = (updates: {
+    principal?: number;
+    profitMode?: 'range' | 'fixed';
+    minRoi?: number;
+    maxRoi?: number;
+    fixedProfit?: number;
+  }) => {
+    setVentureForm(prev => {
+      const principal = updates.principal !== undefined ? updates.principal : prev.principalAmount;
+      const profitMode = updates.profitMode !== undefined ? updates.profitMode : prev.profitMode;
+      const minRoi = updates.minRoi !== undefined ? updates.minRoi : prev.minRoiPercent;
+      const maxRoi = updates.maxRoi !== undefined ? updates.maxRoi : prev.maxRoiPercent;
+      const minProfit = Math.round((principal * minRoi) / 100);
+      const maxProfit = Math.round((principal * maxRoi) / 100);
+      const expectedProfit = profitMode === 'range'
+        ? maxProfit
+        : (updates.fixedProfit !== undefined ? updates.fixedProfit : prev.expectedProfit);
+
+      return {
+        ...prev,
+        principalAmount: principal,
+        profitMode,
+        minRoiPercent: minRoi,
+        maxRoiPercent: maxRoi,
+        minProfit,
+        maxProfit,
+        expectedProfit,
+      };
+    });
+  };
+
   const handleSaveVenture = (e: React.FormEvent) => {
     e.preventDefault();
-    const payload = {
+    const principal = Number(ventureForm.principalAmount) || 0;
+    const isRange = ventureForm.profitMode === 'range';
+    const minRoi = isRange ? Number(ventureForm.minRoiPercent) || 0 : undefined;
+    const maxRoi = isRange ? Number(ventureForm.maxRoiPercent) || 0 : undefined;
+    const minProfit = isRange ? Math.round((principal * (minRoi || 0)) / 100) : Number(ventureForm.expectedProfit) || 0;
+    const maxProfit = isRange ? Math.round((principal * (maxRoi || 0)) / 100) : Number(ventureForm.expectedProfit) || 0;
+    const expectedProfit = isRange ? maxProfit : (Number(ventureForm.expectedProfit) || 0);
+
+    const payload: Omit<BusinessInvestment, 'id'> = {
       title: ventureForm.title.trim() || 'Business Venture',
       partnerOrVenture: ventureForm.partnerOrVenture.trim() || 'Commercial Partner',
-      principalAmount: Number(ventureForm.principalAmount) || 0,
-      expectedProfit: Number(ventureForm.expectedProfit) || 0,
-      totalExpectedReturn: (Number(ventureForm.principalAmount) || 0) + (Number(ventureForm.expectedProfit) || 0),
+      principalAmount: principal,
+      profitMode: ventureForm.profitMode,
+      minRoiPercent: minRoi,
+      maxRoiPercent: maxRoi,
+      minProfit,
+      maxProfit,
+      expectedProfit,
+      totalExpectedReturn: principal + expectedProfit,
       startDate: ventureForm.startDate || new Date().toISOString().split('T')[0],
       maturityDate: ventureForm.maturityDate || '',
       durationMonths: Number(ventureForm.durationMonths) || 6,
@@ -206,11 +306,14 @@ export const InvestmentTracker: React.FC = () => {
   };
 
   const handleOpenConcludeModal = (v: BusinessInvestment) => {
+    const isRange = v.profitMode === 'range' || (v.minRoiPercent !== undefined && v.maxRoiPercent !== undefined);
+    const suggestedProfit = isRange && v.maxProfit ? v.maxProfit : v.expectedProfit;
+
     setConcludingVenture(v);
     setConcludeData({
       concludedDate: new Date().toISOString().split('T')[0],
-      actualProfit: v.expectedProfit,
-      notes: `Successfully concluded. Principal ৳${v.principalAmount.toLocaleString()} & ৳${v.expectedProfit.toLocaleString()} profit returned.`,
+      actualProfit: suggestedProfit,
+      notes: `Successfully concluded. Principal ৳${v.principalAmount.toLocaleString()} & actual profit settled.`,
     });
   };
 
@@ -274,10 +377,12 @@ export const InvestmentTracker: React.FC = () => {
         <div className="theme-card p-3.5 rounded-xl border theme-border">
           <div className="theme-text-muted">Target Profit</div>
           <div className="text-xl font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-1 tabular-nums">
-            +৳{totalActiveProfit.toLocaleString()}
+            {hasActiveProfitRange
+              ? `+৳${totalActiveMinProfit.toLocaleString()} – ৳${totalActiveMaxProfit.toLocaleString()}`
+              : `+৳${totalActiveMaxProfit.toLocaleString()}`}
           </div>
           <div className="text-[11px] theme-text-muted mt-0.5">
-            Expected
+            {hasActiveProfitRange ? 'Expected Range' : 'Expected'}
           </div>
         </div>
 
@@ -285,7 +390,9 @@ export const InvestmentTracker: React.FC = () => {
         <div className="theme-card p-3.5 rounded-xl border theme-border">
           <div className="theme-text-muted">Total Return</div>
           <div className="text-xl font-bold font-mono theme-text-main mt-1 tabular-nums">
-            ৳{totalActiveReturn.toLocaleString()}
+            {hasActiveProfitRange
+              ? `৳${(totalActivePrincipal + totalActiveMinProfit).toLocaleString()} – ৳${(totalActivePrincipal + totalActiveMaxProfit).toLocaleString()}`
+              : `৳${(totalActivePrincipal + totalActiveMaxProfit).toLocaleString()}`}
           </div>
           <div className="text-[11px] theme-text-muted mt-0.5">
             Principal + Profit
@@ -458,17 +565,42 @@ export const InvestmentTracker: React.FC = () => {
 
                   <div>
                     <span className="text-[10px] theme-text-muted block font-sans">
-                      {isActive ? 'Target Profit' : 'Profit'}
+                      {isActive ? 'Target Profit' : 'Realized Profit'}
                     </span>
-                    <span className="text-base font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">
-                      +৳{(isActive ? v.expectedProfit : (v.actualProfit !== undefined ? v.actualProfit : v.expectedProfit)).toLocaleString()}
-                    </span>
+                    <div className="text-base font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">
+                      {isActive ? (
+                        (v.profitMode === 'range' || (v.minRoiPercent !== undefined && v.maxRoiPercent !== undefined)) && (v.minProfit !== v.maxProfit) ? (
+                          <>
+                            +৳{(v.minProfit ?? Math.round((v.principalAmount * (v.minRoiPercent || 0)) / 100)).toLocaleString()} – ৳{(v.maxProfit ?? Math.round((v.principalAmount * (v.maxRoiPercent || 0)) / 100)).toLocaleString()}
+                            <span className="block text-[10px] text-emerald-500/80 font-sans font-normal">
+                              {v.minRoiPercent}% – {v.maxRoiPercent}% ROI
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            +৳{v.expectedProfit.toLocaleString()}
+                            <span className="block text-[10px] theme-text-muted font-sans font-normal">
+                              {v.principalAmount > 0 ? `${((v.expectedProfit / v.principalAmount) * 100).toFixed(1)}% ROI` : 'Fixed'}
+                            </span>
+                          </>
+                        )
+                      ) : (
+                        <>
+                          +৳{(v.actualProfit !== undefined ? v.actualProfit : v.expectedProfit).toLocaleString()}
+                          <span className="block text-[10px] text-slate-400 font-sans font-normal">Settled</span>
+                        </>
+                      )}
+                    </div>
                   </div>
 
                   <div>
                     <span className="text-[10px] theme-text-muted block font-sans">Total Return</span>
                     <span className="text-base font-bold theme-text-main tabular-nums">
-                      ৳{(v.principalAmount + (isActive ? v.expectedProfit : (v.actualProfit !== undefined ? v.actualProfit : v.expectedProfit))).toLocaleString()}
+                      {isActive && (v.profitMode === 'range' || (v.minRoiPercent !== undefined && v.maxRoiPercent !== undefined)) && (v.minProfit !== v.maxProfit) ? (
+                        `৳${(v.principalAmount + (v.minProfit ?? Math.round((v.principalAmount * (v.minRoiPercent || 0)) / 100))).toLocaleString()} – ৳${(v.principalAmount + (v.maxProfit ?? Math.round((v.principalAmount * (v.maxRoiPercent || 0)) / 100))).toLocaleString()}`
+                      ) : (
+                        `৳${(v.principalAmount + (isActive ? v.expectedProfit : (v.actualProfit !== undefined ? v.actualProfit : v.expectedProfit))).toLocaleString()}`
+                      )}
                     </span>
                   </div>
 
@@ -476,7 +608,7 @@ export const InvestmentTracker: React.FC = () => {
                     <span className="text-[10px] theme-text-muted block font-sans">Timeline</span>
                     <div className="text-xs font-semibold theme-text-main mt-0.5">
                       {isActive ? (
-                        <span>Matures {v.maturityDate || 'Oct 2026'}</span>
+                        <span>Matures {v.maturityDate || `${v.durationMonths || 6} Months`}</span>
                       ) : (
                         <span className="text-amber-400">Concluded {v.concludedDate || v.maturityDate || 'Settled'}</span>
                       )}
@@ -554,19 +686,25 @@ export const InvestmentTracker: React.FC = () => {
             <div>
               <span className="text-[10px] theme-text-muted block font-sans">Distributable</span>
               <span className="text-base font-bold text-emerald-500 tabular-nums">
-                ৳{distributable.toLocaleString()}
+                {inspectedIsRange && distributableMin !== distributableMax
+                  ? `৳${distributableMin.toLocaleString()} – ৳${distributableMax.toLocaleString()}`
+                  : `৳${distributableMax.toLocaleString()}`}
               </span>
             </div>
             <div>
               <span className="text-[10px] theme-text-muted block font-sans">Per Unit</span>
               <span className="text-base font-bold text-emerald-400 tabular-nums">
-                ৳{perUnitShare.toFixed(1)}
+                {inspectedIsRange && perUnitMin !== perUnitMax
+                  ? `~৳${perUnitMin.toFixed(0)} – ৳${perUnitMax.toFixed(0)}`
+                  : `৳${perUnitMax.toFixed(1)}`}
               </span>
             </div>
             <div>
               <span className="text-[10px] theme-text-muted block font-sans">Club Retained</span>
               <span className="text-base font-bold theme-text-main tabular-nums">
-                ৳{retainedClub.toLocaleString()}
+                {inspectedIsRange && retainedClubMin !== retainedClubMax
+                  ? `৳${retainedClubMin.toLocaleString()} – ৳${retainedClubMax.toLocaleString()}`
+                  : `৳${retainedClubMax.toLocaleString()}`}
               </span>
             </div>
           </div>
@@ -586,9 +724,7 @@ export const InvestmentTracker: React.FC = () => {
               <tbody className="divide-y theme-border font-mono">
                 {activeMembers.map(m => {
                   const sharePercent = ((m.units / totalActiveUnits) * 100).toFixed(1);
-                  const dividend = m.units * perUnitShare;
                   const capitalEquity = (m.units / totalActiveUnits) * inspectedVenture.principalAmount;
-                  const totalReturn = capitalEquity + dividend;
 
                   return (
                     <tr key={m.id} className="hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
@@ -602,10 +738,18 @@ export const InvestmentTracker: React.FC = () => {
                         {sharePercent}%
                       </td>
                       <td className="py-2 px-3 text-right font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">
-                        ৳{dividend.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })}
+                        {inspectedIsRange && perUnitMin !== perUnitMax ? (
+                          `৳${Math.round(m.units * perUnitMin).toLocaleString()} – ৳${Math.round(m.units * perUnitMax).toLocaleString()}`
+                        ) : (
+                          `৳${(m.units * perUnitMax).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })}`
+                        )}
                       </td>
                       <td className="py-2 px-3 text-right theme-text-main tabular-nums">
-                        ৳{totalReturn.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                        {inspectedIsRange && perUnitMin !== perUnitMax ? (
+                          `৳${Math.round(capitalEquity + m.units * perUnitMin).toLocaleString()} – ৳${Math.round(capitalEquity + m.units * perUnitMax).toLocaleString()}`
+                        ) : (
+                          `৳${(capitalEquity + m.units * perUnitMax).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+                        )}
                       </td>
                     </tr>
                   );
@@ -616,8 +760,16 @@ export const InvestmentTracker: React.FC = () => {
                   <td className="py-2.5 px-3 theme-text-main font-sans">Total ({activeMembers.length})</td>
                   <td className="py-2.5 px-3 text-center">{totalActiveUnits}</td>
                   <td className="py-2.5 px-3 text-center theme-text-muted">100%</td>
-                  <td className="py-2.5 px-3 text-right text-emerald-600 dark:text-emerald-400 tabular-nums">৳{distributable.toLocaleString()}</td>
-                  <td className="py-2.5 px-3 text-right theme-text-main tabular-nums">৳{(inspectedVenture.principalAmount + distributable).toLocaleString()}</td>
+                  <td className="py-2.5 px-3 text-right text-emerald-600 dark:text-emerald-400 tabular-nums">
+                    {inspectedIsRange && distributableMin !== distributableMax
+                      ? `৳${distributableMin.toLocaleString()} – ৳${distributableMax.toLocaleString()}`
+                      : `৳${distributableMax.toLocaleString()}`}
+                  </td>
+                  <td className="py-2.5 px-3 text-right theme-text-main tabular-nums">
+                    {inspectedIsRange && distributableMin !== distributableMax
+                      ? `৳${(inspectedVenture.principalAmount + distributableMin).toLocaleString()} – ৳${(inspectedVenture.principalAmount + distributableMax).toLocaleString()}`
+                      : `৳${(inspectedVenture.principalAmount + distributableMax).toLocaleString()}`}
+                  </td>
                 </tr>
               </tfoot>
             </table>
@@ -672,34 +824,112 @@ export const InvestmentTracker: React.FC = () => {
                 </div>
               </div>
 
-              {/* Financial Capital & Projected Profit */}
-              <div className="grid grid-cols-2 gap-2.5">
-                <div>
-                  <label className="theme-text-muted block mb-1 font-medium">Principal Capital (BDT)</label>
-                  <input
-                    type="number"
-                    min="1000"
-                    step="1000"
-                    value={ventureForm.principalAmount || ''}
-                    onChange={e => setVentureForm(p => ({ ...p, principalAmount: Number(e.target.value) }))}
-                    className="theme-input w-full px-3 py-1.5 rounded-lg font-mono font-bold"
-                    required
-                  />
-                </div>
+              {/* Financial Capital */}
+              <div>
+                <label className="theme-text-muted block mb-1 font-medium">Principal Capital (BDT)</label>
+                <input
+                  type="number"
+                  min="1000"
+                  step="1000"
+                  value={ventureForm.principalAmount || ''}
+                  onChange={e => handlePrincipalOrRoiChange({ principal: Number(e.target.value) })}
+                  className="theme-input w-full px-3 py-1.5 rounded-lg font-mono font-bold"
+                  required
+                />
+              </div>
 
-                <div>
-                  <label className="theme-text-muted block mb-1 font-medium">Expected Profit (BDT)</label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="500"
-                    value={ventureForm.expectedProfit || ''}
-                    onChange={e => setVentureForm(p => ({ ...p, expectedProfit: Number(e.target.value) }))}
-                    className="theme-input w-full px-3 py-1.5 rounded-lg font-mono font-bold text-emerald-500"
-                    required
-                  />
+              {/* Profit / Return Mode Toggle */}
+              <div>
+                <label className="theme-text-muted block mb-1 font-medium">Return / Profit Mode</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handlePrincipalOrRoiChange({ profitMode: 'range' })}
+                    className={`py-1.5 px-2.5 rounded-lg text-xs font-semibold cursor-pointer transition-colors border ${
+                      ventureForm.profitMode === 'range'
+                        ? 'bg-emerald-600 text-white border-emerald-500 shadow-xs'
+                        : 'theme-input theme-text-muted hover:theme-text-main'
+                    }`}
+                  >
+                    % ROI Range (Dynamic)
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handlePrincipalOrRoiChange({ profitMode: 'fixed' })}
+                    className={`py-1.5 px-2.5 rounded-lg text-xs font-semibold cursor-pointer transition-colors border ${
+                      ventureForm.profitMode === 'fixed'
+                        ? 'bg-emerald-600 text-white border-emerald-500 shadow-xs'
+                        : 'theme-input theme-text-muted hover:theme-text-main'
+                    }`}
+                  >
+                    Fixed Profit (৳)
+                  </button>
                 </div>
               </div>
+
+              {/* Return Calculation Inputs */}
+              {ventureForm.profitMode === 'range' ? (
+                <div className="space-y-2 p-2.5 rounded-xl bg-black/5 dark:bg-white/5 border theme-border">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="theme-text-muted block mb-1">Min ROI (%)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="0.5"
+                        value={ventureForm.minRoiPercent ?? ''}
+                        onChange={e => handlePrincipalOrRoiChange({ minRoi: Number(e.target.value) })}
+                        className="theme-input w-full px-2.5 py-1.5 rounded-lg font-mono text-center font-bold"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="theme-text-muted block mb-1">Max ROI (%)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="0.5"
+                        value={ventureForm.maxRoiPercent ?? ''}
+                        onChange={e => handlePrincipalOrRoiChange({ maxRoi: Number(e.target.value) })}
+                        className="theme-input w-full px-2.5 py-1.5 rounded-lg font-mono text-center font-bold"
+                        required
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between text-xs font-mono pt-1 border-t theme-border">
+                    <span className="text-[11px] theme-text-muted font-sans">Projected Profit:</span>
+                    <span className="font-bold text-emerald-500">
+                      +৳{ventureForm.minProfit.toLocaleString()} – ৳{ventureForm.maxProfit.toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="text-[10px] theme-text-muted font-mono text-right">
+                    ~৳{Math.round((ventureForm.minRoiPercent || 0) * 1000).toLocaleString()} – ৳{Math.round((ventureForm.maxRoiPercent || 0) * 1000).toLocaleString()} / lakh
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <label className="theme-text-muted block mb-1 font-medium">Expected Profit (BDT)</label>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      min="0"
+                      step="500"
+                      value={ventureForm.expectedProfit || ''}
+                      onChange={e => handlePrincipalOrRoiChange({ fixedProfit: Number(e.target.value) })}
+                      className="theme-input w-full px-3 py-1.5 rounded-lg font-mono font-bold text-emerald-500"
+                      required
+                    />
+                    {ventureForm.principalAmount > 0 && ventureForm.expectedProfit > 0 && (
+                      <span className="absolute right-3 top-1.5 text-[11px] font-mono text-emerald-400">
+                        {((ventureForm.expectedProfit / ventureForm.principalAmount) * 100).toFixed(1)}% ROI
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* Dates & Duration */}
               <div className="grid grid-cols-3 gap-2">
@@ -838,7 +1068,9 @@ export const InvestmentTracker: React.FC = () => {
                   required
                 />
                 <span className="text-[10px] theme-text-muted mt-0.5 block">
-                  Original target was ৳{concludingVenture.expectedProfit.toLocaleString()}.
+                  Original target was {concludingVenture.profitMode === 'range' && concludingVenture.minProfit && concludingVenture.maxProfit && (concludingVenture.minProfit !== concludingVenture.maxProfit)
+                    ? `৳${concludingVenture.minProfit.toLocaleString()} – ৳${concludingVenture.maxProfit.toLocaleString()} (${concludingVenture.minRoiPercent}% – ${concludingVenture.maxRoiPercent}% ROI)`
+                    : `৳${concludingVenture.expectedProfit.toLocaleString()}`}.
                 </span>
               </div>
 

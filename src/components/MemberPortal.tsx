@@ -15,6 +15,7 @@ export const MemberPortal: React.FC = () => {
     memberLogout, 
     monthlyPayments, 
     summary, 
+    investments,
     investment, 
     expenses, 
     feeCollections, 
@@ -150,11 +151,36 @@ export const MemberPortal: React.FC = () => {
   const totalExpensesAmount = summary.totalExpenses;
   const feeBalance = summary.feeBalance;
 
-  // Projected return for this member based on units
+  // Projected return for this member dynamically based on all active ventures set by Admin
+  const activeVentures = useMemo(() => investments.filter(inv => inv.status === 'Active'), [investments]);
+  const totalActiveVentureProfit = summary.expectedVentureProfit;
   const perUnitProfit = summary.totalActiveUnits > 0 
-    ? investment.expectedProfit / summary.totalActiveUnits 
+    ? totalActiveVentureProfit / summary.totalActiveUnits 
     : 0;
   const myExpectedShareProfit = perUnitProfit * currentMemberUser.units;
+
+  const totalActiveMinProfit = useMemo(() => {
+    return activeVentures.reduce((sum, v) => {
+      if (v.profitMode === 'range' && v.minProfit !== undefined) return sum + v.minProfit;
+      if (v.minRoiPercent !== undefined) return sum + (v.principalAmount * v.minRoiPercent) / 100;
+      return sum + v.expectedProfit;
+    }, 0);
+  }, [activeVentures]);
+
+  const totalActiveMaxProfit = useMemo(() => {
+    return activeVentures.reduce((sum, v) => {
+      if (v.profitMode === 'range' && v.maxProfit !== undefined) return sum + v.maxProfit;
+      if (v.maxRoiPercent !== undefined) return sum + (v.principalAmount * v.maxRoiPercent) / 100;
+      return sum + v.expectedProfit;
+    }, 0);
+  }, [activeVentures]);
+
+  const perUnitMinProfit = (summary.totalActiveUnits || 35) > 0 ? totalActiveMinProfit / (summary.totalActiveUnits || 35) : 0;
+  const perUnitMaxProfit = (summary.totalActiveUnits || 35) > 0 ? totalActiveMaxProfit / (summary.totalActiveUnits || 35) : 0;
+
+  const myMinShareProfit = Math.round(perUnitMinProfit * currentMemberUser.units);
+  const myMaxShareProfit = Math.round(perUnitMaxProfit * currentMemberUser.units);
+  const hasShareRange = myMinShareProfit !== myMaxShareProfit && activeVentures.length > 0;
 
   const handleSubmitPaymentNotice = (e: React.FormEvent) => {
     e.preventDefault();
@@ -303,11 +329,17 @@ export const MemberPortal: React.FC = () => {
 
           <div className="theme-card p-4 rounded-xl border theme-border">
             <div className="text-xs theme-text-muted font-medium">Projected Profit</div>
-            <div className="text-2xl sm:text-3xl font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-1 tabular-nums">
-              +৳{Math.round(myExpectedShareProfit).toLocaleString()}
+            <div className="text-xl sm:text-2xl font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-1 tabular-nums">
+              {activeVentures.length === 0 ? (
+                '+৳0'
+              ) : hasShareRange ? (
+                `+৳${myMinShareProfit.toLocaleString()} – ৳${myMaxShareProfit.toLocaleString()}`
+              ) : (
+                `+৳${Math.round(myExpectedShareProfit).toLocaleString()}`
+              )}
             </div>
             <div className="text-[11px] theme-text-muted mt-1">
-              From active ventures
+              {activeVentures.length === 0 ? 'No active ventures' : hasShareRange ? 'Estimated ROI range' : 'From active ventures'}
             </div>
           </div>
 
@@ -574,7 +606,13 @@ export const MemberPortal: React.FC = () => {
                   <span className="text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-0.5 block tabular-nums">
                     ৳{summary.investedFunds.toLocaleString()}
                   </span>
-                  <span className="text-[10px] theme-text-muted">Partner: {investment.partnerOrVenture}</span>
+                  <span className="text-[10px] theme-text-muted">
+                    {activeVentures.length === 1 
+                      ? `Partner: ${activeVentures[0].partnerOrVenture}` 
+                      : activeVentures.length > 1 
+                      ? `${activeVentures.length} Active Projects` 
+                      : 'No active deployment'}
+                  </span>
                 </div>
 
                 <div className="theme-card-subtle p-3.5 rounded-xl border theme-border">
@@ -582,9 +620,51 @@ export const MemberPortal: React.FC = () => {
                   <span className="text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-0.5 block tabular-nums">
                     +৳{summary.expectedVentureProfit.toLocaleString()}
                   </span>
-                  <span className="text-[10px] theme-text-muted">Maturity Return: ৳{investment.totalExpectedReturn.toLocaleString()}</span>
+                  <span className="text-[10px] theme-text-muted">
+                    {activeVentures.length === 1 && activeVentures[0].maturityDate 
+                      ? `Maturity: ${activeVentures[0].maturityDate}`
+                      : activeVentures.length > 1
+                      ? `Total Return: ৳${(summary.investedFunds + summary.expectedVentureProfit).toLocaleString()}`
+                      : 'Awaiting deployment'}
+                  </span>
                 </div>
               </div>
+
+              {/* Active Business Ventures List (Live sync with Admin Tracker) */}
+              {activeVentures.length > 0 ? (
+                <div className="space-y-2 pt-2 border-t theme-border">
+                  <span className="text-[11px] font-semibold theme-text-muted block uppercase tracking-wider">
+                    Active Deployed Ventures ({activeVentures.length})
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {activeVentures.map(v => (
+                      <div key={v.id} className="p-3 rounded-xl border theme-border theme-card-subtle flex flex-col justify-between text-xs space-y-1.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <div className="font-bold theme-text-main text-xs">{v.title}</div>
+                            <div className="text-[11px] theme-text-muted">Partner: {v.partnerOrVenture}</div>
+                          </div>
+                          <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+                            Active
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px] pt-1 border-t theme-border font-mono">
+                          <span className="theme-text-muted">Deployed: ৳{v.principalAmount.toLocaleString()}</span>
+                          <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
+                            {v.profitMode === 'range' && v.minProfit !== undefined && v.maxProfit !== undefined && v.minProfit !== v.maxProfit
+                              ? `+৳${v.minProfit.toLocaleString()} – ৳${v.maxProfit.toLocaleString()} (${v.minRoiPercent}%–${v.maxRoiPercent}%)`
+                              : `+৳${v.expectedProfit.toLocaleString()} profit`}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="p-3 rounded-xl border theme-border text-center text-xs theme-text-muted">
+                  No business ventures are currently deployed. All funds are preserved in liquid bank reserves.
+                </div>
+              )}
             </div>
 
             {/* Breakdown of Expenses Covered by Membership Fees */}
@@ -642,10 +722,10 @@ export const MemberPortal: React.FC = () => {
 
       {/* Submit Payment Notice Modal */}
       {isSubmitModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
-          <div className="theme-card w-full max-w-lg rounded-2xl shadow-2xl border theme-border overflow-hidden">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2.5 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="theme-card w-full max-w-lg max-h-[92vh] flex flex-col rounded-2xl shadow-2xl border theme-border overflow-hidden">
             
-            <div className="p-4 sm:p-5 border-b theme-border flex items-center justify-between">
+            <div className="p-3.5 sm:p-4 border-b theme-border flex items-center justify-between shrink-0">
               <div>
                 <h3 className="font-bold text-sm theme-text-main">
                   Submit Payment Notice
@@ -675,18 +755,18 @@ export const MemberPortal: React.FC = () => {
                 </p>
               </div>
             ) : (
-              <form onSubmit={handleSubmitPaymentNotice} className="p-5 space-y-4 text-xs">
+              <form onSubmit={handleSubmitPaymentNotice} className="p-3.5 sm:p-4 space-y-3 text-xs overflow-y-auto flex-1">
                 
                 {/* 1. Dynamic Data-Driven Payment Month Selector (Single & Multiple Months) */}
-                <div>
-                  <div className="flex items-center justify-between mb-1.5 flex-wrap gap-1">
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between flex-wrap gap-1">
                     <label className="theme-text-muted font-medium flex items-center gap-1.5">
-                      <span>Payment Period (Select Single or Multiple Months)</span>
+                      <span>Select Month(s)</span>
                     </label>
                     <div className="flex items-center gap-1.5">
                       {periodData && periodData.overdueCount > 0 && (
                         <span className="text-[10px] text-amber-500 font-medium">
-                          {periodData.overdueCount} {periodData.overdueCount === 1 ? 'month' : 'months'} currently due
+                          {periodData.overdueCount} {periodData.overdueCount === 1 ? 'month' : 'months'} due
                         </span>
                       )}
                       {periodData && periodData.options.filter(o => (o.category === 'overdue' || o.isCurrent) && o.canSelect).length > 1 && (
@@ -702,7 +782,7 @@ export const MemberPortal: React.FC = () => {
                     </div>
                   </div>
                   
-                  {/* Dropdown selector (focus-mode targeted element) */}
+                  {/* Dropdown selector */}
                   <select
                     value={selectedMonthKeys.length === 1 ? selectedMonthKeys[0] : ""}
                     onChange={e => {
@@ -715,16 +795,16 @@ export const MemberPortal: React.FC = () => {
                   >
                     <option value="" disabled>
                       {selectedMonthKeys.length > 1 
-                        ? `➕ Click to add / toggle another month (${selectedMonthKeys.length} selected)...`
-                        : 'Select subscription month / period...'}
+                        ? `Add / toggle another month (${selectedMonthKeys.length} selected)...`
+                        : 'Select month...'}
                     </option>
 
                     {/* Overdue months */}
                     {periodData?.options.filter(o => o.category === 'overdue').length ? (
-                      <optgroup label="⚠️ Overdue Months (Requires Immediate Payment)">
+                      <optgroup label="⚠️ Overdue Months">
                         {periodData.options.filter(o => o.category === 'overdue').map(o => (
                           <option key={o.monthKey} value={o.monthKey}>
-                            {selectedMonthKeys.includes(o.monthKey) ? '✓ ' : ''}{o.monthLabel} — Overdue (৳{o.amountDue.toLocaleString()} Due)
+                            {selectedMonthKeys.includes(o.monthKey) ? '✓ ' : ''}{o.monthLabel} (৳{o.amountDue.toLocaleString()} Due)
                           </option>
                         ))}
                       </optgroup>
@@ -732,34 +812,23 @@ export const MemberPortal: React.FC = () => {
 
                     {/* Current calendar month */}
                     {periodData?.options.filter(o => o.isCurrent).map(o => (
-                      <optgroup key="current-group" label="📅 Current Calendar Month">
+                      <optgroup key="current-group" label="📅 Current Month">
                         <option 
                           key={o.monthKey} 
                           value={o.monthKey} 
                           disabled={!o.canSelect}
                         >
-                          {selectedMonthKeys.includes(o.monthKey) ? '✓ ' : ''}{o.monthLabel} {o.isPaid ? '— Already Paid ✓' : o.isPendingApproval ? '— Notice Under Review ⏳' : `— Current Month Due (৳${o.amountDue.toLocaleString()})`}
+                          {selectedMonthKeys.includes(o.monthKey) ? '✓ ' : ''}{o.monthLabel} {o.isPaid ? '— Paid ✓' : o.isPendingApproval ? '— Under Review ⏳' : `(৳${o.amountDue.toLocaleString()} Due)`}
                         </option>
                       </optgroup>
                     ))}
 
                     {/* Advance / Future months */}
                     {periodData?.options.filter(o => o.isFuture && !o.isPaid && !o.isPendingApproval).length ? (
-                      <optgroup label="⏩ Advance Payment (Upcoming Future Months)">
+                      <optgroup label="⏩ Advance Payment">
                         {periodData.options.filter(o => o.isFuture && !o.isPaid && !o.isPendingApproval).map(o => (
                           <option key={o.monthKey} value={o.monthKey}>
-                            {selectedMonthKeys.includes(o.monthKey) ? '✓ ' : ''}{o.monthLabel} — Advance Payment (৳{o.amountExpected.toLocaleString()})
-                          </option>
-                        ))}
-                      </optgroup>
-                    ) : null}
-
-                    {/* Pending approval notices */}
-                    {periodData?.options.filter(o => o.isPendingApproval).length ? (
-                      <optgroup label="⏳ Notices Currently Pending Approval">
-                        {periodData.options.filter(o => o.isPendingApproval).map(o => (
-                          <option key={o.monthKey} value={o.monthKey} disabled>
-                            {o.monthLabel} — Notice Already Under Review (৳{o.amountExpected.toLocaleString()})
+                            {selectedMonthKeys.includes(o.monthKey) ? '✓ ' : ''}{o.monthLabel} (৳{o.amountExpected.toLocaleString()})
                           </option>
                         ))}
                       </optgroup>
@@ -767,10 +836,10 @@ export const MemberPortal: React.FC = () => {
 
                     {/* Settled / Already paid months */}
                     {periodData?.options.filter(o => o.isPaid && !o.isCurrent).length ? (
-                      <optgroup label="✓ Settled Months (Already Paid — Disabled)">
+                      <optgroup label="✓ Settled Months">
                         {periodData.options.filter(o => o.isPaid && !o.isCurrent).map(o => (
                           <option key={o.monthKey} value={o.monthKey} disabled>
-                            {o.monthLabel} — Fully Paid & Credited ✓
+                            {o.monthLabel} — Paid ✓
                           </option>
                         ))}
                       </optgroup>
@@ -779,22 +848,22 @@ export const MemberPortal: React.FC = () => {
 
                   {/* Selected Month Badges with Remove Option */}
                   {selectedMonthKeys.length > 0 && (
-                    <div className="flex flex-wrap items-center gap-1.5 mt-2">
-                      <span className="text-[11px] font-medium theme-text-muted">Selected ({selectedMonthKeys.length}):</span>
+                    <div className="flex flex-wrap items-center gap-1 mt-1">
+                      <span className="text-[10px] font-medium theme-text-muted">Selected ({selectedMonthKeys.length}):</span>
                       {selectedMonthKeys.map(mk => {
                         const opt = periodData?.options.find(o => o.monthKey === mk);
                         const label = opt ? opt.monthLabel : mk;
                         return (
                           <span
                             key={mk}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 shadow-2xs"
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30"
                           >
                             <span>{label}</span>
                             {selectedMonthKeys.length > 1 && (
                               <button
                                 type="button"
                                 onClick={() => toggleMonth(mk)}
-                                className="hover:text-rose-500 text-[11px] ml-0.5 cursor-pointer font-bold leading-none"
+                                className="hover:text-rose-500 text-[10px] ml-0.5 cursor-pointer font-bold leading-none"
                                 title={`Remove ${label}`}
                               >
                                 ✕
@@ -807,12 +876,12 @@ export const MemberPortal: React.FC = () => {
                   )}
 
                   {/* Interactive Multi-Month Checkbox Grid */}
-                  <div className="mt-2.5 p-2.5 rounded-xl border theme-border theme-card-subtle space-y-1.5">
-                    <div className="text-[11px] font-medium theme-text-muted flex items-center justify-between">
-                      <span>Click to select / unselect months for this deposit:</span>
+                  <div className="mt-1.5 p-2 rounded-xl border theme-border theme-card-subtle space-y-1">
+                    <div className="text-[10px] font-medium theme-text-muted flex items-center justify-between">
+                      <span>Tap to toggle months:</span>
                       <span className="font-mono text-[10px]">{currentMemberUser.units} {currentMemberUser.units === 1 ? 'unit' : 'units'} (৳{monthlyRate.toLocaleString()}/mo)</span>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-44 overflow-y-auto pr-1">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 max-h-32 sm:max-h-36 overflow-y-auto pr-1">
                       {periodData?.options.map(opt => {
                         const isSelected = selectedMonthKeys.includes(opt.monthKey);
                         const monthDue = opt.amountDue > 0 ? opt.amountDue : monthlyRate;
@@ -822,34 +891,34 @@ export const MemberPortal: React.FC = () => {
                             type="button"
                             disabled={!opt.canSelect}
                             onClick={() => toggleMonth(opt.monthKey)}
-                            className={`flex items-center justify-between p-2 rounded-xl border text-left transition-all text-xs cursor-pointer ${
+                            className={`flex items-center justify-between p-1.5 rounded-lg border text-left transition-all text-xs cursor-pointer ${
                               !opt.canSelect
                                 ? 'opacity-50 cursor-not-allowed bg-slate-500/5 border-slate-500/15'
                                 : isSelected
-                                ? 'bg-emerald-500/15 border-emerald-500/50 text-emerald-900 dark:text-emerald-200 ring-1 ring-emerald-500/30 shadow-xs'
+                                ? 'bg-emerald-500/15 border-emerald-500/50 text-emerald-900 dark:text-emerald-200 ring-1 ring-emerald-500/30'
                                 : 'hover:bg-slate-500/10 border-slate-500/20 theme-text-main'
                             }`}
                           >
-                            <div className="flex items-center gap-2 min-w-0">
+                            <div className="flex items-center gap-1.5 min-w-0">
                               <input
                                 type="checkbox"
                                 checked={isSelected}
                                 disabled={!opt.canSelect}
                                 onChange={() => {}}
-                                className="rounded text-emerald-600 focus:ring-0 pointer-events-none"
+                                className="rounded text-emerald-600 focus:ring-0 pointer-events-none w-3.5 h-3.5"
                               />
                               <div className="min-w-0">
-                                <div className="font-semibold truncate">{opt.monthLabel}</div>
-                                <div className="text-[10px]">
+                                <div className="font-semibold text-[11px] truncate">{opt.monthLabel}</div>
+                                <div className="text-[9px]">
                                   {opt.category === 'overdue' && <span className="text-amber-500 font-medium">Overdue</span>}
-                                  {opt.isCurrent && <span className="text-emerald-500 font-medium">Current Month</span>}
+                                  {opt.isCurrent && <span className="text-emerald-500 font-medium">Current</span>}
                                   {opt.isFuture && !opt.isPaid && <span className="text-sky-400 font-medium">Advance</span>}
                                   {opt.isPaid && <span className="text-emerald-400 font-medium">Settled ✓</span>}
-                                  {opt.isPendingApproval && <span className="text-amber-400 font-medium">Under Review ⏳</span>}
+                                  {opt.isPendingApproval && <span className="text-amber-400 font-medium">Review ⏳</span>}
                                 </div>
                               </div>
                             </div>
-                            <span className="font-mono font-bold text-xs shrink-0 tabular-nums ml-2">
+                            <span className="font-mono font-bold text-[11px] shrink-0 tabular-nums ml-1">
                               ৳{monthDue.toLocaleString()}
                             </span>
                           </button>
@@ -868,7 +937,7 @@ export const MemberPortal: React.FC = () => {
                     if (!sel) return null;
 
                     return (
-                      <div className={`p-3 rounded-xl border text-xs space-y-1.5 ${
+                      <div className={`px-3 py-2 rounded-xl border text-xs flex items-center justify-between ${
                         sel.category === 'overdue'
                           ? 'bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-200'
                           : sel.isCurrent
@@ -877,52 +946,27 @@ export const MemberPortal: React.FC = () => {
                           ? 'bg-sky-500/10 border-sky-500/30 text-sky-900 dark:text-sky-200'
                           : 'bg-slate-500/10 border-slate-500/25 theme-text-muted'
                       }`}>
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="font-bold theme-text-main text-xs">{sel.monthLabel}</span>
-                            {sel.category === 'overdue' && (
-                              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/20 text-amber-500">
-                                Overdue Month
-                              </span>
-                            )}
-                            {sel.isCurrent && (
-                              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-500">
-                                Current Calendar Month
-                              </span>
-                            )}
-                            {sel.isFuture && !sel.isPaid && (
-                              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-sky-500/20 text-sky-400">
-                                Advance Subscription
-                              </span>
-                            )}
-                            {sel.isPaid && (
-                              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-400">
-                                Already Settled ✓
-                              </span>
-                            )}
-                            {sel.isPendingApproval && (
-                              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/20 text-amber-400">
-                                Notice Under Review ⏳
-                              </span>
-                            )}
-                          </div>
-                          <span className="font-mono font-bold text-xs theme-text-main tabular-nums">
-                            ৳{sel.amountExpected.toLocaleString()}
-                          </span>
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="font-bold theme-text-main text-xs">{sel.monthLabel}</span>
+                          {sel.category === 'overdue' && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/20 text-amber-500">
+                              Overdue
+                            </span>
+                          )}
+                          {sel.isCurrent && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-500">
+                              Current
+                            </span>
+                          )}
+                          {sel.isFuture && !sel.isPaid && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-sky-500/20 text-sky-400">
+                              Advance
+                            </span>
+                          )}
                         </div>
-
-                        {!sel.canSelect && (
-                          <div className="text-[11px] font-medium text-amber-600 dark:text-amber-300 pt-1 border-t border-amber-500/20">
-                            ⚠️ {sel.disabledReason}
-                          </div>
-                        )}
-
-                        {sel.canSelect && (
-                          <div className="text-[11px] theme-text-muted flex justify-between pt-0.5">
-                            <span>Unit Rate: {currentMemberUser.units} {currentMemberUser.units === 1 ? 'unit' : 'units'} × ৳1,000/mo</span>
-                            <span>{sel.amountDue > 0 ? `Unpaid dues: ৳${sel.amountDue.toLocaleString()}` : 'Advance allocation'}</span>
-                          </div>
-                        )}
+                        <span className="font-mono font-bold text-xs theme-text-main tabular-nums ml-2">
+                          ৳{sel.amountExpected.toLocaleString()}
+                        </span>
                       </div>
                     );
                   }
@@ -933,128 +977,110 @@ export const MemberPortal: React.FC = () => {
                     return sum + (opt && opt.amountDue > 0 ? opt.amountDue : monthlyRate);
                   }, 0);
 
-                  const monthLabels = selectedMonthKeys.map(mk => {
-                    const opt = periodData?.options.find(o => o.monthKey === mk);
-                    return opt ? opt.monthLabel : mk;
-                  });
-
                   return (
-                    <div className="p-3 rounded-xl border text-xs space-y-2 bg-emerald-500/10 border-emerald-500/30 text-emerald-900 dark:text-emerald-200">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="font-bold theme-text-main text-xs">
-                            Multiple Months Payment ({selectedMonthKeys.length} Months)
-                          </span>
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-500">
-                            Combined Notice
-                          </span>
-                        </div>
-                        <span className="font-mono font-bold text-xs theme-text-main tabular-nums">
-                          Total: ৳{totalExpected.toLocaleString()}
+                    <div className="px-3 py-2 rounded-xl border text-xs flex items-center justify-between bg-emerald-500/10 border-emerald-500/30 text-emerald-900 dark:text-emerald-200">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="font-bold theme-text-main text-xs">
+                          {selectedMonthKeys.length} Months Selected
+                        </span>
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-500">
+                          Combined Notice
                         </span>
                       </div>
-                      <div className="text-[11px] theme-text-muted">
-                        <strong>Included:</strong> {monthLabels.join(', ')}
-                      </div>
-                      <div className="text-[11px] theme-text-muted flex justify-between pt-0.5 border-t border-emerald-500/20">
-                        <span>Subscription: {currentMemberUser.units} {currentMemberUser.units === 1 ? 'unit' : 'units'} × ৳1,000 × {selectedMonthKeys.length} months</span>
-                        <span className="font-semibold text-emerald-600 dark:text-emerald-400">৳{totalExpected.toLocaleString()}</span>
-                      </div>
+                      <span className="font-mono font-bold text-xs theme-text-main tabular-nums ml-2">
+                        Total: ৳{totalExpected.toLocaleString()}
+                      </span>
                     </div>
                   );
                 })()}
 
-                {/* 2. Actual Payment Submission Date */}
-                <div>
-                  <label className="block theme-text-muted mb-1 font-medium">
-                    Actual Payment Date
-                  </label>
-                  <input
-                    type="date"
-                    value={paymentDate}
-                    onChange={e => setPaymentDate(e.target.value)}
-                    max={getCurrentDateString()}
-                    className="theme-input w-full px-3 py-2 rounded-xl text-xs font-mono"
-                    required
-                  />
-                  <span className="text-[10px] theme-text-muted mt-0.5 block">
-                    The calendar date when you made the transfer or deposit. This date is permanently preserved in the ledger.
-                  </span>
+                {/* 2-Column Responsive Grid: Date & Amount */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3">
+                  <div>
+                    <label className="block theme-text-muted mb-1 font-medium">
+                      Actual Payment Date
+                    </label>
+                    <input
+                      type="date"
+                      value={paymentDate}
+                      onChange={e => setPaymentDate(e.target.value)}
+                      max={getCurrentDateString()}
+                      className="theme-input w-full px-3 py-2 rounded-xl text-xs font-mono"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block theme-text-muted mb-1 font-medium">
+                      Amount Paid (BDT)
+                    </label>
+                    <input
+                      type="number"
+                      value={amount}
+                      onChange={e => setAmount(Number(e.target.value))}
+                      min={100}
+                      step={100}
+                      className="theme-input w-full px-3 py-2 rounded-xl font-mono text-xs font-semibold"
+                      required
+                    />
+                  </div>
                 </div>
 
-                {/* 3. Amount Paid (BDT) */}
-                <div>
-                  <label className="block theme-text-muted mb-1 font-medium">
-                    Amount Paid (BDT)
-                  </label>
-                  <input
-                    type="number"
-                    value={amount}
-                    onChange={e => setAmount(Number(e.target.value))}
-                    min={100}
-                    step={100}
-                    className="theme-input w-full px-3 py-2 rounded-xl font-mono text-xs font-semibold"
-                    required
-                  />
-                  <span className="text-[10px] theme-text-muted mt-0.5 block">
-                    Calculated total: {currentMemberUser.units * 1000} BDT/mo × {selectedMonthKeys.length} {selectedMonthKeys.length === 1 ? 'month' : 'months'} = ৳{(currentMemberUser.units * 1000 * selectedMonthKeys.length).toLocaleString()}. You can adjust the figure if you transferred a different amount.
-                  </span>
+                {/* 2-Column Responsive Grid: Method & Trx ID */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3">
+                  <div>
+                    <label className="block theme-text-muted mb-1 font-medium">
+                      Payment Method
+                    </label>
+                    <select
+                      value={paymentMethod}
+                      onChange={e => setPaymentMethod(e.target.value as PaymentMethod)}
+                      className="theme-input w-full px-3 py-2 rounded-xl text-xs"
+                    >
+                      <option value="Bkash">bKash</option>
+                      <option value="Nagad">Nagad</option>
+                      <option value="CellFin">CellFin</option>
+                      <option value="IBBL">IBBL (Islami Bank)</option>
+                      <option value="UCB">UCB</option>
+                      <option value="PBL">PBL (Pubali Bank)</option>
+                      <option value="IIBL">IIBL</option>
+                      <option value="CityTouch">CityTouch</option>
+                      <option value="Club AC">Club AC</option>
+                      <option value="Cash">Cash in Hand</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block theme-text-muted mb-1 font-medium">
+                      Transaction ID / Reference
+                    </label>
+                    <input
+                      type="text"
+                      value={trxId}
+                      onChange={e => setTrxId(e.target.value)}
+                      placeholder="e.g. BK9X2491LA"
+                      className="theme-input w-full px-3 py-2 rounded-xl font-mono text-xs"
+                    />
+                  </div>
                 </div>
 
-                {/* 4. Payment Method */}
-                <div>
-                  <label className="block theme-text-muted mb-1 font-medium">
-                    Payment Method
-                  </label>
-                  <select
-                    value={paymentMethod}
-                    onChange={e => setPaymentMethod(e.target.value as PaymentMethod)}
-                    className="theme-input w-full px-3 py-2 rounded-xl text-xs"
-                  >
-                    <option value="Bkash">bKash</option>
-                    <option value="Nagad">Nagad</option>
-                    <option value="CellFin">CellFin</option>
-                    <option value="IBBL">IBBL (Islami Bank)</option>
-                    <option value="UCB">UCB</option>
-                    <option value="PBL">PBL (Pubali Bank)</option>
-                    <option value="IIBL">IIBL</option>
-                    <option value="CityTouch">CityTouch</option>
-                    <option value="Club AC">Club AC</option>
-                    <option value="Cash">Cash in Hand</option>
-                    <option value="Other">Other</option>
-                  </select>
-                </div>
-
-                {/* 5. Transaction ID / Reference */}
-                <div>
-                  <label className="block theme-text-muted mb-1 font-medium">
-                    Transaction ID / Reference (Optional)
-                  </label>
-                  <input
-                    type="text"
-                    value={trxId}
-                    onChange={e => setTrxId(e.target.value)}
-                    placeholder="e.g. BK9X2491LA or Deposit Slip No."
-                    className="theme-input w-full px-3 py-2 rounded-xl font-mono text-xs"
-                  />
-                </div>
-
-                {/* 6. Notes */}
+                {/* Notes */}
                 <div>
                   <label className="block theme-text-muted mb-1 font-medium">
                     Notes for Treasurer (Optional)
                   </label>
                   <textarea
-                    rows={2}
+                    rows={1}
                     value={notes}
                     onChange={e => setNotes(e.target.value)}
-                    placeholder="e.g. Sent from personal bKash number ending in 888"
-                    className="theme-input w-full px-3 py-2 rounded-xl text-xs resize-none"
+                    placeholder="e.g. Sent from personal bKash"
+                    className="theme-input w-full px-3 py-1.5 rounded-xl text-xs resize-none"
                   />
                 </div>
 
                 {/* Actions */}
-                <div className="flex justify-end gap-2 pt-2 border-t theme-border">
+                <div className="flex justify-end gap-2 pt-2.5 border-t theme-border shrink-0">
                   <button
                     type="button"
                     onClick={() => setIsSubmitModalOpen(false)}

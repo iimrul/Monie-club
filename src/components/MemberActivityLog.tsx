@@ -80,7 +80,11 @@ export const MemberActivityLog: React.FC<MemberActivityLogProps> = ({
 
     // B. Submitted Notices & Claims (only months active in the ledger)
     const myClaims = pendingClaims.filter(
-      c => c.memberId === member.id && (!activeMonthKeys || activeMonthKeys.has(c.monthKey))
+      c => c.memberId === member.id && (
+        !activeMonthKeys || 
+        activeMonthKeys.has(c.monthKey) || 
+        (c.monthKeys && c.monthKeys.some(mk => activeMonthKeys.has(mk)))
+      )
     );
     myClaims.forEach(c => {
       const dateStr = c.paymentDate || c.payment_date || (c.submittedAt ? c.submittedAt.split('T')[0] : '2026-09-25');

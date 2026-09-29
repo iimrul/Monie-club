@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useClub } from '../context/ClubContext';
 
 export const MemberLoginView: React.FC = () => {
-  const { memberLogin, setPortalMode } = useClub();
+  const { memberLogin } = useClub();
   const [mobile, setMobile] = useState('');
   const [error, setError] = useState<string | null>(null);
 
@@ -62,18 +62,6 @@ export const MemberLoginView: React.FC = () => {
             Sign In
           </button>
         </form>
-
-        {/* Return to Admin Login */}
-        <div className="text-center pt-3 border-t theme-border">
-          <button
-            type="button"
-            onClick={() => setPortalMode('admin')}
-            className="text-xs text-emerald-600 dark:text-emerald-400 hover:underline cursor-pointer inline-flex items-center gap-1 font-medium"
-          >
-            <span>Are you a club administrator?</span>
-            <span>Admin Login →</span>
-          </button>
-        </div>
 
       </div>
     </div>

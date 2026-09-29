@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useClub } from '../context/ClubContext';
 import { ActiveTab } from './Header';
 
@@ -27,11 +27,14 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
 
   const isSuperAdmin = currentAdminUser?.role === 'Super Admin' && currentAdminUser?.canEdit;
 
+  const activeInvestments = useMemo(() => investments.filter(i => i.status === 'Active'), [investments]);
+  const primaryActiveVenture = activeInvestments[0] || investment;
+
   // Inline edit state for Treasury numbers
   const [isEditingTreasury, setIsEditingTreasury] = useState(false);
   const [fundsInput, setFundsInput] = useState(summary.totalClubFunds);
-  const [ventureInput, setVentureInput] = useState(investment.principalAmount);
-  const [profitInput, setProfitInput] = useState(investment.expectedProfit);
+  const [ventureInput, setVentureInput] = useState(summary.investedFunds);
+  const [profitInput, setProfitInput] = useState(summary.expectedVentureProfit);
 
   // Bank profit modal state
   const [isAddBankProfitModalOpen, setIsAddBankProfitModalOpen] = useState(false);
@@ -94,7 +97,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     : '0';
 
   const perUnitProfit = summary.totalActiveUnits > 0 
-    ? (investment.expectedProfit / summary.totalActiveUnits).toFixed(0) 
+    ? (summary.expectedVentureProfit / summary.totalActiveUnits).toFixed(0) 
     : '0';
 
   const ventureRoi = investment.principalAmount > 0
@@ -188,18 +191,20 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
       )}
 
       {/* Primary Financial Metric Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3.5">
+      <div className={`grid grid-cols-1 sm:grid-cols-2 ${
+        activeInvestments.length > 0 ? 'lg:grid-cols-3 xl:grid-cols-5' : 'lg:grid-cols-3 xl:grid-cols-5'
+      } gap-3.5`}>
         
         {/* Card 1: Total Treasury */}
         <div className="theme-card p-4 rounded-xl flex flex-col justify-between">
           <div className="flex items-center justify-between text-xs">
-            <span className="theme-text-muted font-medium">Total Treasury</span>
+            <span className="theme-text-muted font-medium">Total Club Funds</span>
             {isSuperAdmin && (
               <button
                 onClick={() => {
                   setFundsInput(summary.totalClubFunds);
-                  setVentureInput(investment.principalAmount);
-                  setProfitInput(investment.expectedProfit);
+                  setVentureInput(summary.investedFunds);
+                  setProfitInput(summary.expectedVentureProfit);
                   setIsEditingTreasury(!isEditingTreasury);
                 }}
                 className="text-[11px] theme-text-muted hover:theme-text-main cursor-pointer"
@@ -214,80 +219,19 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             </div>
           </div>
           <div className="text-[11px] theme-text-muted">
-            Liquid reserves & ventures
+            Oct 25 – Sep 26 Session
           </div>
         </div>
 
-        {/* Card 2: Deployed Venture Capital */}
-        <div 
-          onClick={() => setActiveTab('investment')}
-          className="theme-card p-4 rounded-xl flex flex-col justify-between cursor-pointer hover:border-emerald-500/50 transition-all"
-        >
-          <div className="flex items-center justify-between text-xs">
-            <span className="theme-text-muted font-medium">Venture Capital</span>
-            <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono">
-              {investedPercent}%
-            </span>
-          </div>
-          <div className="my-2">
-            <div className="text-2xl font-bold font-mono text-emerald-600 dark:text-emerald-400 tracking-tight tabular-nums">
-              ৳{summary.investedFunds.toLocaleString()}
-            </div>
-          </div>
-          <div className="text-[11px] theme-text-muted">
-            +৳{summary.expectedVentureProfit.toLocaleString()} return
-          </div>
-        </div>
-
-        {/* Card 3: Liquid Reserves */}
-        <div className="theme-card p-4 rounded-xl flex flex-col justify-between">
-          <div className="flex items-center justify-between text-xs">
-            <span className="theme-text-muted font-medium">Liquid Reserves</span>
-            <span className="text-[11px] text-sky-600 dark:text-sky-400 font-mono">
-              {liquidPercent}%
-            </span>
-          </div>
-          <div className="my-2">
-            <div className="text-2xl font-bold font-mono theme-text-main tracking-tight tabular-nums">
-              ৳{summary.liquidReserves.toLocaleString()}
-            </div>
-          </div>
-          <div className="text-[11px] theme-text-muted">
-            Bank & cash holdings
-          </div>
-        </div>
-
-        {/* Card 4: Profits (Direct Cash Increase) */}
-        <div className="theme-card p-4 rounded-xl flex flex-col justify-between border-emerald-500/30">
-          <div className="flex items-center justify-between text-xs">
-            <span className="theme-text-muted font-medium">Profits</span>
-            <button
-              onClick={() => setIsAddBankProfitModalOpen(true)}
-              className="text-[11px] font-semibold text-emerald-500 hover:text-emerald-400 cursor-pointer"
-              title="Add profit to increase total cash"
-            >
-              + Add
-            </button>
-          </div>
-          <div className="my-2">
-            <div className="text-2xl font-bold font-mono text-emerald-400 tracking-tight tabular-nums">
-              ৳{summary.totalBankProfits.toLocaleString()}
-            </div>
-          </div>
-          <div className="text-[11px] text-emerald-500/80">
-            Added to total club cash
-          </div>
-        </div>
-
-        {/* Card 5: Outstanding Dues */}
+        {/* Card 2: Outstanding Dues */}
         <div 
           onClick={() => setActiveTab('dues')}
           className="theme-card p-4 rounded-xl flex flex-col justify-between cursor-pointer hover:border-amber-500/50 transition-all"
         >
           <div className="flex items-center justify-between text-xs">
-            <span className="theme-text-muted font-medium">Pending Dues</span>
+            <span className="theme-text-muted font-medium">Total Pending Dues</span>
             <span className="text-[10px] text-amber-600 dark:text-amber-400 font-mono">
-              {overdueMembers.length} overdue
+              {overdueMembers.length} members
             </span>
           </div>
           <div className="my-2">
@@ -300,20 +244,20 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
           </div>
         </div>
 
-        {/* Card 6: Registered Members */}
+        {/* Card 3: Registered Members */}
         <div 
           onClick={() => setActiveTab('members')}
           className="theme-card p-4 rounded-xl flex flex-col justify-between cursor-pointer hover:border-emerald-500/50 transition-all"
         >
           <div className="flex items-center justify-between text-xs">
-            <span className="theme-text-muted font-medium">Members</span>
+            <span className="theme-text-muted font-medium">Active Members</span>
             <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono">
               {summary.totalActiveUnits} Units
             </span>
           </div>
           <div className="my-2">
             <div className="text-2xl font-bold font-mono theme-text-main tracking-tight tabular-nums">
-              {summary.activeMembersCount} <span className="text-xs font-normal theme-text-muted">Active</span>
+              {summary.activeMembersCount} <span className="text-xs font-normal theme-text-muted">Members</span>
             </div>
           </div>
           <div className="text-[11px] theme-text-muted">
@@ -321,85 +265,171 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
           </div>
         </div>
 
-      </div>
-
-      {/* Capital Allocation & Liquidity Ratio Bar */}
-      <div className="theme-card p-4 rounded-xl text-xs space-y-3">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
-          <span className="font-semibold theme-text-main">
-            Capital Allocation & Liquidity Ratio
-          </span>
-          <span className="font-mono text-[11px] theme-text-muted">
-            ৳{summary.totalClubFunds.toLocaleString()} Net Position
-          </span>
-        </div>
-
-        {/* Visual Progress Bar */}
-        <div className="w-full bg-slate-100 dark:bg-slate-800/80 rounded-full h-2.5 overflow-hidden flex p-0.5">
-          <div 
-            style={{ width: `${investedPercent}%` }} 
-            className="bg-emerald-500 h-full rounded-l-full transition-all duration-300"
-            title={`Invested: ৳${summary.investedFunds.toLocaleString()} (${investedPercent}%)`}
-          />
-          <div 
-            style={{ width: `${liquidPercent}%` }} 
-            className="bg-sky-500 h-full rounded-r-full transition-all duration-300"
-            title={`Liquid: ৳${summary.liquidReserves.toLocaleString()} (${liquidPercent}%)`}
-          />
-        </div>
-
-        {/* Legend */}
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-0.5 text-[11px] theme-text-muted">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-              <span>Venture Capital: <strong className="font-mono theme-text-main">৳{summary.investedFunds.toLocaleString()}</strong> ({investedPercent}%)</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-sky-500"></span>
-              <span>Liquid Reserves: <strong className="font-mono theme-text-main">৳{summary.liquidReserves.toLocaleString()}</strong> ({liquidPercent}%)</span>
+        {/* Card 4: Registration Fees Collected */}
+        <div 
+          onClick={() => setActiveTab('expenses')}
+          className="theme-card p-4 rounded-xl flex flex-col justify-between cursor-pointer hover:border-emerald-500/50 transition-all"
+        >
+          <div className="flex items-center justify-between text-xs">
+            <span className="theme-text-muted font-medium">Registration Fees</span>
+            <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono">
+              Pool
+            </span>
+          </div>
+          <div className="my-2">
+            <div className="text-2xl font-bold font-mono text-emerald-500 tracking-tight tabular-nums">
+              ৳{summary.totalFeeCollected.toLocaleString()}
             </div>
           </div>
-
-          <div className="font-mono">
-            Monthly Inflow: ৳{(summary.totalActiveUnits * 1000).toLocaleString()}/mo
+          <div className="text-[11px] theme-text-muted">
+            Member admission fund
           </div>
         </div>
-      </div>
 
-      {/* Profits & Inflow Section */}
-      <div className="theme-card p-4 rounded-xl text-xs space-y-3 border theme-border">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b theme-border">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-              <h2 className="text-sm font-bold theme-text-main">
-                Profits
-              </h2>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold">
-                ৳{summary.totalBankProfits.toLocaleString()} Realized
+        {/* Card 5: Operational Costs */}
+        <div 
+          onClick={() => setActiveTab('expenses')}
+          className="theme-card p-4 rounded-xl flex flex-col justify-between cursor-pointer hover:border-rose-500/50 transition-all"
+        >
+          <div className="flex items-center justify-between text-xs">
+            <span className="theme-text-muted font-medium">Operating Costs</span>
+            <span className="text-[10px] text-rose-500 font-mono">
+              Spent
+            </span>
+          </div>
+          <div className="my-2">
+            <div className="text-2xl font-bold font-mono text-rose-500 tracking-tight tabular-nums">
+              ৳{summary.totalExpenses.toLocaleString()}
+            </div>
+          </div>
+          <div className="text-[11px] theme-text-muted">
+            Bank, courier & stationery
+          </div>
+        </div>
+
+        {/* Card: Deployed Venture Capital (Only shown when active investments exist) */}
+        {activeInvestments.length > 0 && (
+          <div 
+            onClick={() => setActiveTab('investment')}
+            className="theme-card p-4 rounded-xl flex flex-col justify-between cursor-pointer hover:border-emerald-500/50 transition-all"
+          >
+            <div className="flex items-center justify-between text-xs">
+              <span className="theme-text-muted font-medium">Venture Capital</span>
+              <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono">
+                {investedPercent}%
               </span>
             </div>
-            <p className="text-[11px] theme-text-muted mt-0.5">
-              Profits & dividends earned, directly increasing total club cash reserves.
-            </p>
+            <div className="my-2">
+              <div className="text-2xl font-bold font-mono text-emerald-600 dark:text-emerald-400 tracking-tight tabular-nums">
+                ৳{summary.investedFunds.toLocaleString()}
+              </div>
+            </div>
+            <div className="text-[11px] theme-text-muted">
+              +৳{summary.expectedVentureProfit.toLocaleString()} return
+            </div>
+          </div>
+        )}
+
+        {/* Card: Realized Profits (Only shown when bank/venture profits exist) */}
+        {summary.totalBankProfits > 0 && (
+          <div className="theme-card p-4 rounded-xl flex flex-col justify-between border-emerald-500/30">
+            <div className="flex items-center justify-between text-xs">
+              <span className="theme-text-muted font-medium">Profits</span>
+              <button
+                onClick={() => setIsAddBankProfitModalOpen(true)}
+                className="text-[11px] font-semibold text-emerald-500 hover:text-emerald-400 cursor-pointer"
+                title="Add profit to increase total cash"
+              >
+                + Add
+              </button>
+            </div>
+            <div className="my-2">
+              <div className="text-2xl font-bold font-mono text-emerald-400 tracking-tight tabular-nums">
+                ৳{summary.totalBankProfits.toLocaleString()}
+              </div>
+            </div>
+            <div className="text-[11px] text-emerald-500/80">
+              Added to total club cash
+            </div>
+          </div>
+        )}
+
+      </div>
+
+      {/* Capital Allocation & Liquidity Ratio Bar (Strictly conditional: only shown when ventures are deployed) */}
+      {activeInvestments.length > 0 && (
+        <div className="theme-card p-4 rounded-xl text-xs space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+            <span className="font-semibold theme-text-main">
+              Capital Allocation & Liquidity Ratio
+            </span>
+            <span className="font-mono text-[11px] theme-text-muted">
+              ৳{summary.totalClubFunds.toLocaleString()} Net Position
+            </span>
           </div>
 
-          <button
-            onClick={() => setIsAddBankProfitModalOpen(true)}
-            className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer transition-colors shadow-xs flex items-center gap-1.5 shrink-0 self-start sm:self-auto"
-          >
-            <span>+</span>
-            <span>Record Profit</span>
-          </button>
+          {/* Visual Progress Bar */}
+          <div className="w-full bg-slate-100 dark:bg-slate-800/80 rounded-full h-2.5 overflow-hidden flex p-0.5">
+            <div 
+              style={{ width: `${investedPercent}%` }} 
+              className="bg-emerald-500 h-full rounded-l-full transition-all duration-300"
+              title={`Invested: ৳${summary.investedFunds.toLocaleString()} (${investedPercent}%)`}
+            />
+            <div 
+              style={{ width: `${liquidPercent}%` }} 
+              className="bg-sky-500 h-full rounded-r-full transition-all duration-300"
+              title={`Liquid: ৳${summary.liquidReserves.toLocaleString()} (${liquidPercent}%)`}
+            />
+          </div>
+
+          {/* Legend */}
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-0.5 text-[11px] theme-text-muted">
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                <span>Venture Capital: <strong className="font-mono theme-text-main">৳{summary.investedFunds.toLocaleString()}</strong> ({investedPercent}%)</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-sky-500"></span>
+                <span>Liquid Reserves: <strong className="font-mono theme-text-main">৳{summary.liquidReserves.toLocaleString()}</strong> ({liquidPercent}%)</span>
+              </div>
+            </div>
+
+            <div className="font-mono">
+              Monthly Inflow: ৳{(summary.totalActiveUnits * 1000).toLocaleString()}/mo
+            </div>
+          </div>
         </div>
+      )}
 
-        {/* Profit entries list */}
-        {bankProfits.length === 0 ? (
-          <div className="py-4 text-center text-xs theme-text-muted">
-            No profit records yet. Click &ldquo;+ Record Profit&rdquo; to input profits received.
+      {/* Profits & Inflow Section (Strictly conditional: only shown when profits exist) */}
+      {summary.totalBankProfits > 0 && (
+        <div className="theme-card p-4 rounded-xl text-xs space-y-3 border theme-border">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b theme-border">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                <h2 className="text-sm font-bold theme-text-main">
+                  Profits
+                </h2>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold">
+                  ৳{summary.totalBankProfits.toLocaleString()} Realized
+                </span>
+              </div>
+              <p className="text-[11px] theme-text-muted mt-0.5">
+                Profits & dividends earned, directly increasing total club cash reserves.
+              </p>
+            </div>
+
+            <button
+              onClick={() => setIsAddBankProfitModalOpen(true)}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer transition-colors shadow-xs flex items-center gap-1.5 shrink-0 self-start sm:self-auto"
+            >
+              <span>+</span>
+              <span>Record Profit</span>
+            </button>
           </div>
-        ) : (
+
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="theme-card-subtle theme-text-muted font-mono text-[11px] border-b theme-border">
@@ -441,90 +471,108 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
               </tbody>
             </table>
           </div>
-        )}
-      </div>
-
-      {/* Two Column Layout: Active Venture & Collection Queue */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        
-        {/* Left Column: Business Venture Spotlight */}
-        <div className="theme-card p-5 rounded-xl space-y-4 flex flex-col justify-between">
-          <div>
-            <div className="flex items-center justify-between pb-3 border-b theme-border">
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                <h2 className="text-sm font-bold theme-text-main">
-                  Active Venture Portfolio
-                </h2>
-                {investments.length > 1 && (
-                  <span className="text-[11px] theme-text-muted">({investments.length} total)</span>
-                )}
-              </div>
-              <button
-                onClick={() => setActiveTab('investment')}
-                className="text-xs text-emerald-600 dark:text-emerald-400 font-medium hover:underline cursor-pointer flex items-center gap-1"
-              >
-                <span>View Venture</span>
-                <span>→</span>
-              </button>
-            </div>
-
-            {/* Venture Partner Header */}
-            <div className="mt-3.5 mb-3 flex items-start justify-between">
-              <div>
-                <div className="font-semibold text-sm theme-text-main">
-                  {investment.title || investment.partnerOrVenture}
-                </div>
-                <div className="text-xs theme-text-muted mt-0.5">
-                  Partner: <span className="theme-text-main font-medium">{investment.partnerOrVenture}</span>
-                  {investment.contactPerson && <span> · Contact: {investment.contactPerson}</span>}
-                </div>
-              </div>
-              <span className="text-[11px] font-mono text-emerald-600 dark:text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded">
-                Active
-              </span>
-            </div>
-
-            {/* 4 Financial Metric Tiles */}
-            <div className="grid grid-cols-2 gap-2.5 text-xs">
-              <div className="theme-card-subtle p-3 rounded-lg">
-                <span className="theme-text-muted block text-[11px]">Principal Deployed</span>
-                <span className="text-lg font-bold font-mono theme-text-main mt-0.5 block tabular-nums">
-                  ৳{investment.principalAmount.toLocaleString()}
-                </span>
-              </div>
-
-              <div className="theme-card-subtle p-3 rounded-lg">
-                <span className="theme-text-muted block text-[11px]">Expected Gain</span>
-                <span className="text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-0.5 block tabular-nums">
-                  +৳{investment.expectedProfit.toLocaleString()}
-                </span>
-              </div>
-
-              <div className="theme-card-subtle p-3 rounded-lg">
-                <span className="theme-text-muted block text-[11px]">Maturity Return</span>
-                <span className="text-base font-bold font-mono theme-text-main mt-0.5 block tabular-nums">
-                  ৳{investment.totalExpectedReturn.toLocaleString()}
-                </span>
-              </div>
-
-              <div className="theme-card-subtle p-3 rounded-lg">
-                <span className="theme-text-muted block text-[11px]">Projected per Unit</span>
-                <span className="text-base font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-0.5 block tabular-nums">
-                  ~৳{perUnitProfit} / unit
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Footer note on dividend policy & milestones */}
-          <div className="pt-2 border-t theme-border flex items-center justify-between text-[11px] theme-text-muted">
-            <span>Dividend Policy: <strong className="theme-text-main font-medium">{investment.dividendPolicy || 'Distribute to Members'}</strong></span>
-            {totalMilestones > 0 && (
-              <span className="font-mono">{completedMilestones}/{totalMilestones} milestones</span>
-            )}
-          </div>
         </div>
+      )}
+
+      {/* Two Column / Full Width Layout: Active Venture (Only if active) & Collection Queue */}
+      <div className={`grid grid-cols-1 ${activeInvestments.length > 0 ? 'lg:grid-cols-2' : ''} gap-4`}>
+        
+        {/* Left Column: Business Venture Spotlight (Strictly conditional: hidden if zero active ventures) */}
+        {activeInvestments.length > 0 && (
+          <div className="theme-card p-5 rounded-xl space-y-4 flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between pb-3 border-b theme-border">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                  <h2 className="text-sm font-bold theme-text-main">
+                    Active Venture Portfolio
+                  </h2>
+                  {investments.length > 1 && (
+                    <span className="text-[11px] theme-text-muted">({investments.length} total)</span>
+                  )}
+                </div>
+                <button
+                  onClick={() => setActiveTab('investment')}
+                  className="text-xs text-emerald-600 dark:text-emerald-400 font-medium hover:underline cursor-pointer flex items-center gap-1"
+                >
+                  <span>View Venture</span>
+                  <span>→</span>
+                </button>
+              </div>
+
+              {/* Venture Partner Header */}
+              <div className="mt-3.5 mb-3 flex items-start justify-between">
+                <div>
+                  <div className="font-semibold text-sm theme-text-main">
+                    {activeInvestments.length === 1 
+                      ? (primaryActiveVenture.title || primaryActiveVenture.partnerOrVenture)
+                      : `${activeInvestments.length} Active Business Ventures`}
+                  </div>
+                  <div className="text-xs theme-text-muted mt-0.5">
+                    {activeInvestments.length === 1 ? (
+                      <>Partner: <span className="theme-text-main font-medium">{primaryActiveVenture.partnerOrVenture}</span></>
+                    ) : (
+                      <span>Combined deployment managed via Investment Portfolio</span>
+                    )}
+                  </div>
+                </div>
+                <span className="text-[11px] font-mono text-emerald-600 dark:text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded">
+                  Active
+                </span>
+              </div>
+
+              {/* 4 Financial Metric Tiles */}
+              <div className="grid grid-cols-2 gap-2.5 text-xs">
+                <div className="theme-card-subtle p-3 rounded-lg">
+                  <span className="theme-text-muted block text-[11px]">Principal Deployed</span>
+                  <span className="text-lg font-bold font-mono theme-text-main mt-0.5 block tabular-nums">
+                    ৳{summary.investedFunds.toLocaleString()}
+                  </span>
+                </div>
+
+                <div className="theme-card-subtle p-3 rounded-lg">
+                  <span className="theme-text-muted block text-[11px]">Expected Gain</span>
+                  <span className="text-base sm:text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-0.5 block tabular-nums">
+                    {primaryActiveVenture.profitMode === 'range' && primaryActiveVenture.minProfit !== undefined && primaryActiveVenture.maxProfit !== undefined && primaryActiveVenture.minProfit !== primaryActiveVenture.maxProfit
+                      ? `+৳${primaryActiveVenture.minProfit.toLocaleString()} – ৳${primaryActiveVenture.maxProfit.toLocaleString()}`
+                      : `+৳{summary.expectedVentureProfit.toLocaleString()}`}
+                  </span>
+                  {primaryActiveVenture.profitMode === 'range' && primaryActiveVenture.minRoiPercent !== undefined && primaryActiveVenture.maxRoiPercent !== undefined && (
+                    <span className="text-[10px] text-emerald-500 font-sans block">
+                      {primaryActiveVenture.minRoiPercent}% – {primaryActiveVenture.maxRoiPercent}% ROI
+                    </span>
+                  )}
+                </div>
+
+                <div className="theme-card-subtle p-3 rounded-lg">
+                  <span className="theme-text-muted block text-[11px]">Maturity Return</span>
+                  <span className="text-base font-bold font-mono theme-text-main mt-0.5 block tabular-nums">
+                    {primaryActiveVenture.profitMode === 'range' && primaryActiveVenture.minProfit !== undefined && primaryActiveVenture.maxProfit !== undefined && primaryActiveVenture.minProfit !== primaryActiveVenture.maxProfit
+                      ? `৳${(summary.investedFunds + primaryActiveVenture.minProfit).toLocaleString()} – ৳${(summary.investedFunds + primaryActiveVenture.maxProfit).toLocaleString()}`
+                      : `৳${(summary.investedFunds + summary.expectedVentureProfit).toLocaleString()}`}
+                  </span>
+                </div>
+
+                <div className="theme-card-subtle p-3 rounded-lg">
+                  <span className="theme-text-muted block text-[11px]">Projected per Unit</span>
+                  <span className="text-base font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-0.5 block tabular-nums">
+                    {primaryActiveVenture.profitMode === 'range' && primaryActiveVenture.minProfit !== undefined && primaryActiveVenture.maxProfit !== undefined && primaryActiveVenture.minProfit !== primaryActiveVenture.maxProfit
+                      ? `~৳${Math.round(primaryActiveVenture.minProfit / (summary.totalActiveUnits || 35))} – ৳${Math.round(primaryActiveVenture.maxProfit / (summary.totalActiveUnits || 35))} / unit`
+                      : `~৳${perUnitProfit} / unit`}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer note on dividend policy & milestones */}
+            <div className="pt-2 border-t theme-border flex items-center justify-between text-[11px] theme-text-muted">
+              <span>Dividend Policy: <strong className="theme-text-main font-medium">{primaryActiveVenture.dividendPolicy || 'Distribute to Members'}</strong></span>
+              {totalMilestones > 0 && (
+                <span className="font-mono">{completedMilestones}/{totalMilestones} milestones</span>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Right Column: Pending Dues & Quick Collect Queue */}
         <div className="theme-card p-5 rounded-xl space-y-4 flex flex-col justify-between">

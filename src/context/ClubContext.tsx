@@ -35,7 +35,7 @@ import {
   calculateMemberDues,
   OFFICIAL_CLUB_NAME
 } from '../services/paymentDueManager';
-import { db, collection, doc, onSnapshot } from '../firebase';
+import { db, collection, doc, onSnapshot, deleteDoc } from '../firebase';
 import { 
   seedFirestoreIfEmpty,
   cloudSaveMember,
@@ -233,16 +233,21 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const [investments, setInvestments] = useState<BusinessInvestment[]>(() => {
     try {
+      let deletedIds: string[] = ['inv-prev-1'];
+      const storedDel = localStorage.getItem(`${STORAGE_KEY_PREFIX}_deleted_investments`);
+      if (storedDel) {
+        deletedIds = Array.from(new Set([...deletedIds, ...JSON.parse(storedDel)]));
+      }
       const stored = localStorage.getItem(`${STORAGE_KEY_PREFIX}_investments`);
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
+        if (Array.isArray(parsed)) {
+          return parsed.filter(i => !deletedIds.includes(i.id));
         }
       }
-      return INITIAL_INVESTMENTS;
+      return INITIAL_INVESTMENTS.filter(i => !deletedIds.includes(i.id));
     } catch {
-      return INITIAL_INVESTMENTS;
+      return INITIAL_INVESTMENTS.filter(i => i.id !== 'inv-prev-1');
     }
   });
 
@@ -270,8 +275,20 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const stored = localStorage.getItem(`${STORAGE_KEY_PREFIX}_fees`);
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) {
+        if (Array.isArray(parsed) && parsed.length >= INITIAL_FEE_COLLECTIONS.length) {
           return parsed;
+        } else if (Array.isArray(parsed) && parsed.length > 0) {
+          // Self-heal: merge stored custom updates with INITIAL_FEE_COLLECTIONS so previous paid members are never lost
+          const feeMap = new Map<string, FeeCollection>();
+          INITIAL_FEE_COLLECTIONS.forEach(f => feeMap.set(f.memberId, f));
+          parsed.forEach((f: FeeCollection) => {
+            if (f.status === 'Unpaid' || f.feeAmount === 0) {
+              feeMap.delete(f.memberId);
+            } else if (f.status === 'Paid') {
+              feeMap.set(f.memberId, f);
+            }
+          });
+          return Array.from(feeMap.values());
         }
       }
       return INITIAL_FEE_COLLECTIONS;
@@ -280,12 +297,16 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   });
 
-  // Portal Mode: 'admin' (default - credentials-secured admin panel) or 'member' (individual member portal)
+  // Portal Mode: 'member' (default for root monie-club.vercel.app / '/') or 'admin' (/admin or #admin)
   const [portalMode, setPortalModeState] = useState<PortalMode>(() => {
     try {
       if (typeof window !== 'undefined') {
+        const pathname = window.location.pathname.toLowerCase();
         const hash = window.location.hash.toLowerCase();
-        if (hash === '#member') {
+        if (pathname === '/admin' || pathname.startsWith('/admin/') || hash === '#admin') {
+          return 'admin';
+        }
+        if (pathname === '/' || hash === '#member' || pathname === '') {
           return 'member';
         }
         const stored = localStorage.getItem(`${STORAGE_KEY_PREFIX}_portal_mode`);
@@ -293,9 +314,9 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return stored as PortalMode;
         }
       }
-      return 'admin';
+      return 'member';
     } catch {
-      return 'admin';
+      return 'member';
     }
   });
 
@@ -305,9 +326,10 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
       localStorage.setItem(`${STORAGE_KEY_PREFIX}_portal_mode`, mode);
       if (typeof window !== 'undefined' && window.history) {
         if (mode === 'admin') {
-          window.history.pushState(null, '', '/');
+          const target = window.location.pathname.startsWith('/admin') ? window.location.pathname : '/admin';
+          window.history.pushState(null, '', target);
         } else {
-          window.history.pushState(null, '', '#member');
+          window.history.pushState(null, '', '/');
         }
       }
     } catch {
@@ -322,7 +344,7 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
       localStorage.removeItem(`${STORAGE_KEY_PREFIX}_current_admin`);
       localStorage.setItem(`${STORAGE_KEY_PREFIX}_portal_mode`, 'member');
       if (typeof window !== 'undefined' && window.history) {
-        window.history.pushState(null, '', '#member');
+        window.history.pushState(null, '', '/');
       }
     } catch {}
     setPortalModeState('member');
@@ -426,19 +448,28 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   });
 
-  // Pending Member Payment Claims
+  // Pending Member Payment Claims (Only real submissions from members)
   const [pendingClaims, setPendingClaims] = useState<PendingPaymentClaim[]>(() => {
     try {
       const stored = localStorage.getItem(`${STORAGE_KEY_PREFIX}_pending_claims`);
-      return stored ? JSON.parse(stored) : INITIAL_CLAIMS;
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          return parsed.filter(c => c.id !== 'claim_1' && c.id !== 'claim_2');
+        }
+      }
+      return [];
     } catch {
-      return INITIAL_CLAIMS;
+      return [];
     }
   });
 
-  // 1. Initial Cloud Firestore Seed Check on App Mount (Disabled automatic writes during quota limit)
+  // 1. Initial Cloud Firestore Seed Check on App Mount
   useEffect(() => {
-    // Cloud Firestore is operating in safe read-only / cached mode while daily write quota resets
+    seedFirestoreIfEmpty().catch(() => {});
+    // Purge legacy mock claims if any exist in cloud
+    deleteDoc(doc(db, 'pendingClaims', 'claim_1')).catch(() => {});
+    deleteDoc(doc(db, 'pendingClaims', 'claim_2')).catch(() => {});
   }, []);
 
   // 2. Real-time Cloud Firestore Listeners (Ensures all data is saved and synced with cloud)
@@ -487,7 +518,13 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!snapshot.empty) {
         const cloudInv: BusinessInvestment[] = [];
         snapshot.forEach(docSnap => cloudInv.push(docSnap.data() as BusinessInvestment));
-        setInvestments(cloudInv);
+        let deletedIds: string[] = ['inv-prev-1'];
+        try {
+          const stored = localStorage.getItem(`${STORAGE_KEY_PREFIX}_deleted_investments`);
+          if (stored) deletedIds = Array.from(new Set([...deletedIds, ...JSON.parse(stored)]));
+        } catch {}
+        const filtered = cloudInv.filter(inv => !deletedIds.includes(inv.id));
+        setInvestments(filtered);
       }
     }, handleSnapshotErr('investments'));
 
@@ -495,7 +532,22 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!snapshot.empty) {
         const cloudExp: ExpenseRecord[] = [];
         snapshot.forEach(docSnap => cloudExp.push(docSnap.data() as ExpenseRecord));
-        setExpenses(cloudExp);
+
+        let deletedIds: string[] = [];
+        try {
+          const stored = localStorage.getItem(`${STORAGE_KEY_PREFIX}_deleted_expenses`);
+          if (stored) deletedIds = JSON.parse(stored);
+        } catch {}
+
+        setExpenses(prev => {
+          const map = new Map<string, ExpenseRecord>();
+          INITIAL_EXPENSES.filter(e => !deletedIds.includes(e.id)).forEach(e => map.set(e.id, e));
+          if (prev) {
+            prev.filter(e => !deletedIds.includes(e.id)).forEach(e => map.set(e.id, e));
+          }
+          cloudExp.filter(e => !deletedIds.includes(e.id)).forEach(e => map.set(e.id, e));
+          return Array.from(map.values());
+        });
       }
     }, handleSnapshotErr('expenses'));
 
@@ -503,16 +555,44 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!snapshot.empty) {
         const cloudFees: FeeCollection[] = [];
         snapshot.forEach(docSnap => cloudFees.push(docSnap.data() as FeeCollection));
-        setFeeCollections(cloudFees);
+
+        setFeeCollections(prev => {
+          const feeMap = new Map<string, FeeCollection>();
+          // Base: official initial records
+          INITIAL_FEE_COLLECTIONS.forEach(f => feeMap.set(f.memberId, f));
+          // Overlay existing local state
+          if (prev && prev.length > 0) {
+            prev.forEach(f => {
+              if (f.status === 'Paid') {
+                feeMap.set(f.memberId, f);
+              }
+            });
+          }
+          // Overlay cloud records: accurately handle both Unpaid and Paid
+          cloudFees.forEach(cf => {
+            if (cf.status === 'Unpaid' || cf.feeAmount === 0) {
+              feeMap.delete(cf.memberId);
+            } else if (cf.status === 'Paid') {
+              feeMap.set(cf.memberId, cf);
+            }
+          });
+
+          return Array.from(feeMap.values());
+        });
       }
     }, handleSnapshotErr('fees'));
 
     const unsubClaims = onSnapshot(collection(db, 'pendingClaims'), snapshot => {
-      if (!snapshot.empty) {
-        const cloudClaims: PendingPaymentClaim[] = [];
-        snapshot.forEach(docSnap => cloudClaims.push(docSnap.data() as PendingPaymentClaim));
-        setPendingClaims(cloudClaims);
-      }
+      const cloudClaims: PendingPaymentClaim[] = [];
+      snapshot.forEach(docSnap => {
+        const claim = docSnap.data() as PendingPaymentClaim;
+        if (claim.id === 'claim_1' || claim.id === 'claim_2') {
+          deleteDoc(doc(db, 'pendingClaims', claim.id)).catch(() => {});
+        } else {
+          cloudClaims.push(claim);
+        }
+      });
+      setPendingClaims(cloudClaims);
     }, handleSnapshotErr('claims'));
 
     const unsubAdmins = onSnapshot(collection(db, 'adminUsers'), snapshot => {
@@ -1057,11 +1137,22 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const addInvestment = (venture: Omit<BusinessInvestment, 'id'>) => {
     const principal = Number(venture.principalAmount) || 0;
-    const profit = Number(venture.expectedProfit) || 0;
+    const profitMode = venture.profitMode || 'range';
+    const minRoi = venture.minRoiPercent !== undefined ? Number(venture.minRoiPercent) : undefined;
+    const maxRoi = venture.maxRoiPercent !== undefined ? Number(venture.maxRoiPercent) : undefined;
+    const minProfit = venture.minProfit !== undefined ? Number(venture.minProfit) : (minRoi !== undefined ? (principal * minRoi) / 100 : undefined);
+    const maxProfit = venture.maxProfit !== undefined ? Number(venture.maxProfit) : (maxRoi !== undefined ? (principal * maxRoi) / 100 : undefined);
+    const profit = Number(venture.expectedProfit) || (maxProfit !== undefined ? maxProfit : (minProfit || 0));
+
     const newVenture: BusinessInvestment = {
       ...venture,
       id: `inv-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       principalAmount: principal,
+      profitMode,
+      minRoiPercent: minRoi,
+      maxRoiPercent: maxRoi,
+      minProfit,
+      maxProfit,
       expectedProfit: profit,
       totalExpectedReturn: principal + profit,
       status: venture.status || 'Active',
@@ -1087,7 +1178,11 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (inv.id === targetId) {
           const updated = { ...inv, ...updates };
           const p = updated.principalAmount !== undefined ? Number(updated.principalAmount) : inv.principalAmount;
-          const profit = updated.expectedProfit !== undefined ? Number(updated.expectedProfit) : inv.expectedProfit;
+          if (updated.profitMode === 'range' && updated.minRoiPercent !== undefined && updated.maxRoiPercent !== undefined) {
+            if (updated.minProfit === undefined) updated.minProfit = (p * updated.minRoiPercent) / 100;
+            if (updated.maxProfit === undefined) updated.maxProfit = (p * updated.maxRoiPercent) / 100;
+          }
+          const profit = updated.expectedProfit !== undefined ? Number(updated.expectedProfit) : (updated.maxProfit || inv.expectedProfit);
           updated.principalAmount = p;
           updated.expectedProfit = profit;
           updated.totalExpectedReturn = p + profit;
@@ -1105,7 +1200,11 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (inv.id === activeTarget.id) {
             const updated = { ...inv, ...updates };
             const p = updated.principalAmount !== undefined ? Number(updated.principalAmount) : inv.principalAmount;
-            const profit = updated.expectedProfit !== undefined ? Number(updated.expectedProfit) : inv.expectedProfit;
+            if (updated.profitMode === 'range' && updated.minRoiPercent !== undefined && updated.maxRoiPercent !== undefined) {
+              if (updated.minProfit === undefined) updated.minProfit = (p * updated.minRoiPercent) / 100;
+              if (updated.maxProfit === undefined) updated.maxProfit = (p * updated.maxRoiPercent) / 100;
+            }
+            const profit = updated.expectedProfit !== undefined ? Number(updated.expectedProfit) : (updated.maxProfit || inv.expectedProfit);
             updated.principalAmount = p;
             updated.expectedProfit = profit;
             updated.totalExpectedReturn = p + profit;
@@ -1158,6 +1257,14 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const deleteInvestment = (id: string) => {
     setInvestments(prev => prev.filter(inv => inv.id !== id));
     cloudDeleteInvestment(id);
+    try {
+      const stored = localStorage.getItem(`${STORAGE_KEY_PREFIX}_deleted_investments`);
+      const list: string[] = stored ? JSON.parse(stored) : ['inv-prev-1'];
+      if (!list.includes(id)) {
+        list.push(id);
+        localStorage.setItem(`${STORAGE_KEY_PREFIX}_deleted_investments`, JSON.stringify(list));
+      }
+    } catch {}
   };
 
   const toggleInvestmentMilestone = (milestoneId: string, investmentId?: string) => {
@@ -1185,6 +1292,14 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const deleteExpense = (id: string) => {
     setExpenses(prev => prev.filter(e => e.id !== id));
     cloudDeleteExpense(id);
+    try {
+      const stored = localStorage.getItem(`${STORAGE_KEY_PREFIX}_deleted_expenses`);
+      const list = stored ? JSON.parse(stored) : [];
+      if (!list.includes(id)) {
+        list.push(id);
+        localStorage.setItem(`${STORAGE_KEY_PREFIX}_deleted_expenses`, JSON.stringify(list));
+      }
+    } catch {}
   };
 
   const addFeeCollection = (feeData: Omit<FeeCollection, 'id'>) => {
@@ -1297,14 +1412,30 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
     status: 'Paid' | 'Unpaid', 
     details?: { feeAmount?: number; date?: string; paymentMethod?: PaymentMethod; notes?: string }
   ) => {
+    const member = members.find(m => m.id === memberId);
+
     if (status === 'Unpaid') {
-      // Remove all fee collections for this member to mark them unpaid
+      // Remove all active fee collections for this member
       const toDelete = feeCollections.filter(f => f.memberId === memberId);
       toDelete.forEach(f => cloudDeleteFee(f.id));
+      cloudDeleteFee(`fee-${memberId}`);
+
+      // Save explicit Unpaid record so cloud sync knows this member was intentionally set to Unpaid
+      const unpaidRecord: FeeCollection = {
+        id: `fee-${memberId}`,
+        memberId: memberId,
+        memberName: member?.name || memberId,
+        units: member?.units || 1,
+        feeAmount: 0,
+        date: new Date().toISOString().split('T')[0],
+        status: 'Unpaid',
+        purpose: 'Registration & Admin Fee (100/unit)',
+      };
+      cloudSaveFee(unpaidRecord);
+
       setFeeCollections(prev => prev.filter(f => f.memberId !== memberId));
     } else {
       // Mark as Paid
-      const member = members.find(m => m.id === memberId);
       if (!member) return;
 
       const feeAmount = details?.feeAmount !== undefined ? details.feeAmount : member.units * 100;
@@ -1315,8 +1446,9 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const existingFees = feeCollections.filter(f => f.memberId === memberId);
       existingFees.forEach(f => cloudDeleteFee(f.id));
 
+      const deterministicId = `fee-${member.id}`;
       const newRecord: FeeCollection = {
-        id: `fee-${Date.now()}-${member.id}`,
+        id: deterministicId,
         memberId: member.id,
         memberName: member.name,
         units: member.units,
@@ -1620,18 +1752,45 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Member Portal Authentication Handlers
+  // Member Portal Authentication Handlers with International Phone Number Matching
   const memberLogin = (mobile: string): { success: boolean; error?: string } => {
     const cleanMobile = mobile.replace(/[^0-9]/g, '');
-    if (!cleanMobile) {
+    if (!cleanMobile || cleanMobile.length < 5) {
       return { success: false, error: 'Please enter a valid mobile number.' };
     }
+
+    const inputNoZero = cleanMobile.replace(/^0+/, '');
+
     const found = members.find(m => {
       const mClean = m.contactNumber.replace(/[^0-9]/g, '');
-      return mClean === cleanMobile || (cleanMobile.length >= 10 && mClean.endsWith(cleanMobile));
+      if (!mClean) return false;
+
+      // 1. Direct exact match (e.g. 01863269888, 601168433905, 966577160390)
+      if (mClean === cleanMobile) return true;
+
+      // 2. Normalized leading zeros comparison
+      const mNoZero = mClean.replace(/^0+/, '');
+      if (mNoZero === inputNoZero) return true;
+
+      // 3. Suffix comparison (e.g. stored +966577160390 matches user input 0577160390 or 577160390, or stored 0186... matches +880186...)
+      if (inputNoZero.length >= 7 && mNoZero.length >= 7) {
+        if (mNoZero.endsWith(inputNoZero) || inputNoZero.endsWith(mNoZero)) {
+          return true;
+        }
+      }
+
+      // 4. Last 9 digits match (standard national subscriber number across all telecoms)
+      if (cleanMobile.length >= 9 && mClean.length >= 9) {
+        if (cleanMobile.slice(-9) === mClean.slice(-9)) {
+          return true;
+        }
+      }
+
+      return false;
     });
+
     if (!found) {
-      return { success: false, error: 'No active club member found registered with this phone number.' };
+      return { success: false, error: 'No active club member found registered with this phone number. If you live abroad, please include your country code (e.g. +966..., +60...).' };
     }
     setCurrentMemberUser(found);
     return { success: true };

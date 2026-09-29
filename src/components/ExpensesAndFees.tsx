@@ -233,7 +233,7 @@ export const ExpensesAndFees: React.FC = () => {
             − ৳{totalExpenses.toLocaleString()}
           </div>
           <div className="text-[11px] theme-text-muted mt-0.5">
-            {expenses.length} Records (৳1,729)
+            {expenses.length} Records (৳{totalExpenses.toLocaleString()})
           </div>
         </div>
 

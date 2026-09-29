@@ -212,12 +212,17 @@ export const PendingApprovalsView: React.FC = () => {
                     )}
 
                     {/* Delete Claim Button for Super Admin */}
-                    {!isPending && isSuperAdmin && (
+                    {isSuperAdmin && (
                       <button
-                        onClick={() => deletePaymentClaim(claim.id)}
-                        className="text-[11px] theme-text-muted hover:text-rose-500 cursor-pointer"
+                        onClick={() => {
+                          if (confirm(`Permanently remove payment claim from ${claim.memberName}?`)) {
+                            deletePaymentClaim(claim.id);
+                          }
+                        }}
+                        className="text-[11px] text-rose-500 hover:text-rose-600 dark:hover:text-rose-400 cursor-pointer pt-0.5 hover:underline"
+                        title="Permanently remove this claim"
                       >
-                        Remove record
+                        Delete Record
                       </button>
                     )}
                   </div>

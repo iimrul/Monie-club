@@ -28,9 +28,6 @@ export const db = initializeFirestore(app, {
   experimentalAutoDetectLongPolling: true,
 }, dbId);
 
-// Safely halt network retry loops while daily quota resets
-disableNetwork(db).catch(() => {});
-
 export const auth = getAuth(app);
 
 export { 

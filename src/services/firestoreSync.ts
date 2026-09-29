@@ -69,6 +69,33 @@ export async function seedFirestoreIfEmpty(force = false) {
   try {
     const snapMembers = await getDocs(collection(db, 'members'));
     
+    // Ensure feeCollections and expenses are seeded into Cloud Firestore if empty
+    try {
+      const snapFees = await getDocs(collection(db, 'feeCollections'));
+      if (snapFees.empty) {
+        for (const fee of INITIAL_FEE_COLLECTIONS) {
+          await setDoc(doc(db, 'feeCollections', `fee-${fee.memberId}`), sanitizeForFirestore({ ...fee, id: `fee-${fee.memberId}` }), { merge: true });
+        }
+      }
+    } catch {}
+
+    try {
+      const snapExpenses = await getDocs(collection(db, 'expenses'));
+      if (snapExpenses.empty) {
+        for (const exp of INITIAL_EXPENSES) {
+          await setDoc(doc(db, 'expenses', exp.id), sanitizeForFirestore(exp), { merge: true });
+        }
+      }
+    } catch {}
+
+    // Ensure dummy legacy projects and mock claims are permanently purged from Firestore
+    try {
+      await deleteDoc(doc(db, 'investments', 'inv-prev-1'));
+      await deleteDoc(doc(db, 'investments', 'inv-chittagong-agro-2026'));
+      await deleteDoc(doc(db, 'pendingClaims', 'claim_1'));
+      await deleteDoc(doc(db, 'pendingClaims', 'claim_2'));
+    } catch {}
+
     // If members already exist in cloud database, mark seeded and avoid rewriting payments
     if (!force && !snapMembers.empty && snapMembers.docs.length >= INITIAL_MEMBERS.length) {
       if (typeof window !== 'undefined') {

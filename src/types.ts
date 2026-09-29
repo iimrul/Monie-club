@@ -65,15 +65,20 @@ export interface MonthlyPayment {
 export interface BusinessInvestment {
   id: string;
   title: string;
-  principalAmount: number; // e.g. 200,000 BDT
-  sourceFund?: string; // e.g. "Club Central Reserve (from 3.81 Lakh Total Funds)"
+  principalAmount: number; // e.g. 100,000 BDT
+  sourceFund?: string; // e.g. "Monie Club Treasury"
   startDate: string; // e.g. "2026-04-15"
   maturityDate: string; // e.g. "2026-10-31"
   concludedDate?: string; // e.g. "2026-10-31"
   durationMonths: number; // 6 months
-  expectedProfit: number; // 17,000 BDT
-  actualProfit?: number; // 17,000 BDT
-  totalExpectedReturn: number; // 217,000 BDT
+  profitMode?: 'range' | 'fixed'; // Dynamic Range / ROI Mode vs Fixed
+  minRoiPercent?: number; // e.g. 10 (% per duration)
+  maxRoiPercent?: number; // e.g. 12.5 (% per duration)
+  minProfit?: number; // e.g. 10,000 BDT
+  maxProfit?: number; // e.g. 12,500 BDT
+  expectedProfit: number; // Midpoint or base expected profit in BDT
+  actualProfit?: number; // Realized profit upon conclusion in BDT
+  totalExpectedReturn: number; // Principal + Expected Profit
   status: 'Active' | 'Inactive' | 'Completed' | 'Pending Settlement' | 'Disbursed';
   partnerOrVenture: string; // e.g. "Commercial Trading & Commodity Supply"
   contactPerson?: string;

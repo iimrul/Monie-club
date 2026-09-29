@@ -37,18 +37,20 @@ function AppContent() {
   const [isReportsModalOpen, setIsReportsModalOpen] = useState(false);
   const [isRBACModalOpen, setIsRBACModalOpen] = useState(false);
 
-  // Sync hash routing if user manually specifies #member or #admin
+  // Sync URL routing: /admin opens Admin Login/Panel; / opens Member Authentication/Portal
   useEffect(() => {
     const handleUrlCheck = () => {
       if (typeof window !== 'undefined') {
+        const pathname = window.location.pathname.toLowerCase();
         const hash = window.location.hash.toLowerCase();
-        if (hash === '#member') {
-          if (portalMode !== 'member') {
-            setPortalMode('member');
-          }
-        } else if (hash === '#admin') {
+
+        if (pathname === '/admin' || pathname.startsWith('/admin/') || hash === '#admin') {
           if (portalMode !== 'admin') {
             setPortalMode('admin');
+          }
+        } else if (pathname === '/' || hash === '#member' || pathname === '') {
+          if (portalMode !== 'member') {
+            setPortalMode('member');
           }
         }
       }
