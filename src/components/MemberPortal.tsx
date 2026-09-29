@@ -5,6 +5,7 @@ import { MemberActivityLog } from './MemberActivityLog';
 import { 
   getMemberPaymentPeriodOptions, 
   getCurrentDateString, 
+  compareMonthKeys,
   OFFICIAL_CLUB_NAME 
 } from '../services/paymentDueManager';
 
@@ -34,7 +35,16 @@ export const MemberPortal: React.FC = () => {
   }, [currentMemberUser, months, monthlyPayments, pendingClaims]);
 
   const [isSubmitModalOpen, setIsSubmitModalOpen] = useState(false);
-  const [selectedMonthKey, setSelectedMonthKey] = useState<MonthKey>('2026-09');
+  // Support multiple months payment claim simultaneously
+  const [selectedMonthKeys, setSelectedMonthKeys] = useState<MonthKey[]>(['2026-09']);
+  const selectedMonthKey = selectedMonthKeys[0] || '2026-09';
+  const setSelectedMonthKey = (key: MonthKey) => {
+    setSelectedMonthKeys([key]);
+    const opt = periodData?.options.find(o => o.monthKey === key);
+    if (opt) {
+      setAmount(opt.amountDue > 0 ? opt.amountDue : (currentMemberUser?.units || 1) * 1000);
+    }
+  };
   const [paymentDate, setPaymentDate] = useState<string>(getCurrentDateString());
   const [amount, setAmount] = useState<number>((currentMemberUser?.units || 1) * 1000);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('Bkash');
@@ -42,17 +52,64 @@ export const MemberPortal: React.FC = () => {
   const [notes, setNotes] = useState('');
   const [submitSuccess, setSubmitSuccess] = useState(false);
 
-  // Sync recommended month when modal opens or period data changes
+  // Sync recommended or overdue months when modal opens or period data changes
   useEffect(() => {
     if (periodData && isSubmitModalOpen) {
-      const rec = periodData.recommendedMonthKey;
-      setSelectedMonthKey(rec);
-      const opt = periodData.options.find(o => o.monthKey === rec);
-      const targetAmount = opt && opt.amountDue > 0 ? opt.amountDue : (currentMemberUser?.units || 1) * 1000;
+      const overdueKeys = periodData.options
+        .filter(o => o.category === 'overdue' && o.canSelect)
+        .map(o => o.monthKey);
+      const initialKeys = overdueKeys.length > 0 ? overdueKeys : [periodData.recommendedMonthKey];
+      setSelectedMonthKeys(initialKeys);
+
+      const targetAmount = initialKeys.reduce((sum, mk) => {
+        const opt = periodData.options.find(o => o.monthKey === mk);
+        return sum + (opt && opt.amountDue > 0 ? opt.amountDue : (currentMemberUser?.units || 1) * 1000);
+      }, 0);
       setAmount(targetAmount);
       setPaymentDate(getCurrentDateString());
     }
   }, [isSubmitModalOpen, periodData, currentMemberUser?.units]);
+
+  // Toggle month selection on/off for multi-month payment
+  const toggleMonth = (mKey: MonthKey) => {
+    const opt = periodData?.options.find(o => o.monthKey === mKey);
+    if (opt && !opt.canSelect) return;
+
+    setSelectedMonthKeys(prev => {
+      let nextKeys: MonthKey[];
+      if (prev.includes(mKey)) {
+        if (prev.length <= 1) {
+          return prev; // keep at least 1 month selected
+        }
+        nextKeys = prev.filter(k => k !== mKey);
+      } else {
+        nextKeys = [...prev, mKey].sort(compareMonthKeys);
+      }
+
+      const targetAmount = nextKeys.reduce((sum, mk) => {
+        const o = periodData?.options.find(item => item.monthKey === mk);
+        return sum + (o && o.amountDue > 0 ? o.amountDue : (currentMemberUser?.units || 1) * 1000);
+      }, 0);
+      setAmount(targetAmount);
+
+      return nextKeys;
+    });
+  };
+
+  const handleSelectAllDue = () => {
+    if (!periodData) return;
+    const dueKeys = periodData.options
+      .filter(o => (o.category === 'overdue' || o.isCurrent) && o.canSelect)
+      .map(o => o.monthKey);
+    if (dueKeys.length > 0) {
+      setSelectedMonthKeys(dueKeys);
+      const targetAmount = dueKeys.reduce((sum, mk) => {
+        const o = periodData.options.find(item => item.monthKey === mk);
+        return sum + (o && o.amountDue > 0 ? o.amountDue : (currentMemberUser?.units || 1) * 1000);
+      }, 0);
+      setAmount(targetAmount);
+    }
+  };
 
   if (!currentMemberUser) {
     return null;
@@ -70,7 +127,10 @@ export const MemberPortal: React.FC = () => {
 
   // Filter ONLY this member's submitted claims strictly for active ledger months
   const myClaims = useMemo(() => {
-    return pendingClaims.filter(c => c.memberId === currentMemberUser.id && activeMonthKeys.has(c.monthKey));
+    return pendingClaims.filter(c => 
+      c.memberId === currentMemberUser.id && 
+      (activeMonthKeys.has(c.monthKey) || (c.monthKeys && c.monthKeys.some(mk => activeMonthKeys.has(mk))))
+    );
   }, [pendingClaims, currentMemberUser.id, activeMonthKeys]);
 
   // Financial summary for this member
@@ -98,21 +158,34 @@ export const MemberPortal: React.FC = () => {
 
   const handleSubmitPaymentNotice = (e: React.FormEvent) => {
     e.preventDefault();
-    const selectedOption = periodData?.options.find(o => o.monthKey === selectedMonthKey);
-    if (selectedOption && !selectedOption.canSelect) {
+    if (selectedMonthKeys.length === 0) return;
+
+    // Check all selected options can be submitted
+    const selectedOptions = selectedMonthKeys.map(mk => periodData?.options.find(o => o.monthKey === mk));
+    if (selectedOptions.some(opt => opt && !opt.canSelect)) {
       return;
     }
 
-    const monthLabel = selectedOption ? selectedOption.monthLabel : selectedMonthKey;
+    const sortedKeys = [...selectedMonthKeys].sort(compareMonthKeys);
+    const labels = sortedKeys.map(mk => {
+      const opt = periodData?.options.find(o => o.monthKey === mk);
+      return opt ? opt.monthLabel : mk;
+    });
+
+    const monthLabel = labels.length === 1 
+      ? labels[0] 
+      : `${labels.join(', ')} (${labels.length} months)`;
 
     submitPaymentClaim({
       memberId: currentMemberUser.id,
       memberName: currentMemberUser.name,
       memberMobile: currentMemberUser.contactNumber,
-      monthKey: selectedMonthKey,
+      monthKey: sortedKeys[0],
+      monthKeys: sortedKeys,
       monthLabel,
+      monthLabels: labels,
       units: currentMemberUser.units,
-      amount: Number(amount) || monthlyRate,
+      amount: Number(amount) || (monthlyRate * sortedKeys.length),
       paymentMethod,
       paymentDate: paymentDate || getCurrentDateString(),
       payment_date: paymentDate || getCurrentDateString(),
@@ -428,8 +501,13 @@ export const MemberPortal: React.FC = () => {
                   return (
                     <div key={claim.id} className="p-3.5 rounded-xl border theme-border theme-card-subtle flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
                       <div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-semibold theme-text-main">{claim.monthLabel}</span>
+                          {claim.monthKeys && claim.monthKeys.length > 1 && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-sky-500/20 text-sky-600 dark:text-sky-400">
+                              {claim.monthKeys.length} Months
+                            </span>
+                          )}
                           <span className={`px-2 py-0.5 text-[10px] font-medium rounded-full ${
                             isPending 
                               ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400' 
@@ -599,38 +677,54 @@ export const MemberPortal: React.FC = () => {
             ) : (
               <form onSubmit={handleSubmitPaymentNotice} className="p-5 space-y-4 text-xs">
                 
-                {/* 1. Dynamic Data-Driven Payment Month Selector */}
+                {/* 1. Dynamic Data-Driven Payment Month Selector (Single & Multiple Months) */}
                 <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="theme-text-muted font-medium">
-                      Payment Period (Subscription Month)
+                  <div className="flex items-center justify-between mb-1.5 flex-wrap gap-1">
+                    <label className="theme-text-muted font-medium flex items-center gap-1.5">
+                      <span>Payment Period (Select Single or Multiple Months)</span>
                     </label>
-                    {periodData && periodData.overdueCount > 0 && (
-                      <span className="text-[10px] text-amber-500 font-medium">
-                        {periodData.overdueCount} {periodData.overdueCount === 1 ? 'month' : 'months'} currently due
-                      </span>
-                    )}
+                    <div className="flex items-center gap-1.5">
+                      {periodData && periodData.overdueCount > 0 && (
+                        <span className="text-[10px] text-amber-500 font-medium">
+                          {periodData.overdueCount} {periodData.overdueCount === 1 ? 'month' : 'months'} currently due
+                        </span>
+                      )}
+                      {periodData && periodData.options.filter(o => (o.category === 'overdue' || o.isCurrent) && o.canSelect).length > 1 && (
+                        <button
+                          type="button"
+                          onClick={handleSelectAllDue}
+                          className="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-500/20 text-amber-600 dark:text-amber-400 hover:bg-amber-500/30 transition-colors cursor-pointer"
+                          title="Select all overdue and current months at once"
+                        >
+                          Select All Due
+                        </button>
+                      )}
+                    </div>
                   </div>
                   
+                  {/* Dropdown selector (focus-mode targeted element) */}
                   <select
-                    value={selectedMonthKey}
+                    value={selectedMonthKeys.length === 1 ? selectedMonthKeys[0] : ""}
                     onChange={e => {
-                      const newKey = e.target.value;
-                      setSelectedMonthKey(newKey);
-                      const opt = periodData?.options.find(o => o.monthKey === newKey);
-                      if (opt) {
-                        setAmount(opt.amountDue > 0 ? opt.amountDue : monthlyRate);
+                      const newKey = e.target.value as MonthKey;
+                      if (newKey && !selectedMonthKeys.includes(newKey)) {
+                        toggleMonth(newKey);
                       }
                     }}
-                    className="theme-input w-full px-3 py-2 rounded-xl text-xs font-medium"
-                    required
+                    className="theme-input w-full px-3 py-2 rounded-xl text-xs font-medium cursor-pointer"
                   >
+                    <option value="" disabled>
+                      {selectedMonthKeys.length > 1 
+                        ? `➕ Click to add / toggle another month (${selectedMonthKeys.length} selected)...`
+                        : 'Select subscription month / period...'}
+                    </option>
+
                     {/* Overdue months */}
                     {periodData?.options.filter(o => o.category === 'overdue').length ? (
                       <optgroup label="⚠️ Overdue Months (Requires Immediate Payment)">
                         {periodData.options.filter(o => o.category === 'overdue').map(o => (
                           <option key={o.monthKey} value={o.monthKey}>
-                            {o.monthLabel} — Overdue (৳{o.amountDue.toLocaleString()} Due)
+                            {selectedMonthKeys.includes(o.monthKey) ? '✓ ' : ''}{o.monthLabel} — Overdue (৳{o.amountDue.toLocaleString()} Due)
                           </option>
                         ))}
                       </optgroup>
@@ -644,7 +738,7 @@ export const MemberPortal: React.FC = () => {
                           value={o.monthKey} 
                           disabled={!o.canSelect}
                         >
-                          {o.monthLabel} {o.isPaid ? '— Already Paid ✓' : o.isPendingApproval ? '— Notice Under Review ⏳' : `— Current Month Due (৳${o.amountDue.toLocaleString()})`}
+                          {selectedMonthKeys.includes(o.monthKey) ? '✓ ' : ''}{o.monthLabel} {o.isPaid ? '— Already Paid ✓' : o.isPendingApproval ? '— Notice Under Review ⏳' : `— Current Month Due (৳${o.amountDue.toLocaleString()})`}
                         </option>
                       </optgroup>
                     ))}
@@ -654,7 +748,7 @@ export const MemberPortal: React.FC = () => {
                       <optgroup label="⏩ Advance Payment (Upcoming Future Months)">
                         {periodData.options.filter(o => o.isFuture && !o.isPaid && !o.isPendingApproval).map(o => (
                           <option key={o.monthKey} value={o.monthKey}>
-                            {o.monthLabel} — Advance Payment (৳{o.amountExpected.toLocaleString()})
+                            {selectedMonthKeys.includes(o.monthKey) ? '✓ ' : ''}{o.monthLabel} — Advance Payment (৳{o.amountExpected.toLocaleString()})
                           </option>
                         ))}
                       </optgroup>
@@ -671,7 +765,7 @@ export const MemberPortal: React.FC = () => {
                       </optgroup>
                     ) : null}
 
-                    {/* Settled / Already paid months (disabled to prevent accidental double payment) */}
+                    {/* Settled / Already paid months */}
                     {periodData?.options.filter(o => o.isPaid && !o.isCurrent).length ? (
                       <optgroup label="✓ Settled Months (Already Paid — Disabled)">
                         {periodData.options.filter(o => o.isPaid && !o.isCurrent).map(o => (
@@ -682,70 +776,190 @@ export const MemberPortal: React.FC = () => {
                       </optgroup>
                     ) : null}
                   </select>
+
+                  {/* Selected Month Badges with Remove Option */}
+                  {selectedMonthKeys.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                      <span className="text-[11px] font-medium theme-text-muted">Selected ({selectedMonthKeys.length}):</span>
+                      {selectedMonthKeys.map(mk => {
+                        const opt = periodData?.options.find(o => o.monthKey === mk);
+                        const label = opt ? opt.monthLabel : mk;
+                        return (
+                          <span
+                            key={mk}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 shadow-2xs"
+                          >
+                            <span>{label}</span>
+                            {selectedMonthKeys.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => toggleMonth(mk)}
+                                className="hover:text-rose-500 text-[11px] ml-0.5 cursor-pointer font-bold leading-none"
+                                title={`Remove ${label}`}
+                              >
+                                ✕
+                              </button>
+                            )}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Interactive Multi-Month Checkbox Grid */}
+                  <div className="mt-2.5 p-2.5 rounded-xl border theme-border theme-card-subtle space-y-1.5">
+                    <div className="text-[11px] font-medium theme-text-muted flex items-center justify-between">
+                      <span>Click to select / unselect months for this deposit:</span>
+                      <span className="font-mono text-[10px]">{currentMemberUser.units} {currentMemberUser.units === 1 ? 'unit' : 'units'} (৳{monthlyRate.toLocaleString()}/mo)</span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-44 overflow-y-auto pr-1">
+                      {periodData?.options.map(opt => {
+                        const isSelected = selectedMonthKeys.includes(opt.monthKey);
+                        const monthDue = opt.amountDue > 0 ? opt.amountDue : monthlyRate;
+                        return (
+                          <button
+                            key={opt.monthKey}
+                            type="button"
+                            disabled={!opt.canSelect}
+                            onClick={() => toggleMonth(opt.monthKey)}
+                            className={`flex items-center justify-between p-2 rounded-xl border text-left transition-all text-xs cursor-pointer ${
+                              !opt.canSelect
+                                ? 'opacity-50 cursor-not-allowed bg-slate-500/5 border-slate-500/15'
+                                : isSelected
+                                ? 'bg-emerald-500/15 border-emerald-500/50 text-emerald-900 dark:text-emerald-200 ring-1 ring-emerald-500/30 shadow-xs'
+                                : 'hover:bg-slate-500/10 border-slate-500/20 theme-text-main'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                disabled={!opt.canSelect}
+                                onChange={() => {}}
+                                className="rounded text-emerald-600 focus:ring-0 pointer-events-none"
+                              />
+                              <div className="min-w-0">
+                                <div className="font-semibold truncate">{opt.monthLabel}</div>
+                                <div className="text-[10px]">
+                                  {opt.category === 'overdue' && <span className="text-amber-500 font-medium">Overdue</span>}
+                                  {opt.isCurrent && <span className="text-emerald-500 font-medium">Current Month</span>}
+                                  {opt.isFuture && !opt.isPaid && <span className="text-sky-400 font-medium">Advance</span>}
+                                  {opt.isPaid && <span className="text-emerald-400 font-medium">Settled ✓</span>}
+                                  {opt.isPendingApproval && <span className="text-amber-400 font-medium">Under Review ⏳</span>}
+                                </div>
+                              </div>
+                            </div>
+                            <span className="font-mono font-bold text-xs shrink-0 tabular-nums ml-2">
+                              ৳{monthDue.toLocaleString()}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
 
                 {/* Selected Month Status & Breakdown Badge */}
                 {(() => {
-                  const sel = periodData?.options.find(o => o.monthKey === selectedMonthKey);
-                  if (!sel) return null;
+                  if (selectedMonthKeys.length === 0) return null;
+
+                  if (selectedMonthKeys.length === 1) {
+                    const sel = periodData?.options.find(o => o.monthKey === selectedMonthKeys[0]);
+                    if (!sel) return null;
+
+                    return (
+                      <div className={`p-3 rounded-xl border text-xs space-y-1.5 ${
+                        sel.category === 'overdue'
+                          ? 'bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-200'
+                          : sel.isCurrent
+                          ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-900 dark:text-emerald-200'
+                          : sel.isFuture && !sel.isPaid
+                          ? 'bg-sky-500/10 border-sky-500/30 text-sky-900 dark:text-sky-200'
+                          : 'bg-slate-500/10 border-slate-500/25 theme-text-muted'
+                      }`}>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-bold theme-text-main text-xs">{sel.monthLabel}</span>
+                            {sel.category === 'overdue' && (
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/20 text-amber-500">
+                                Overdue Month
+                              </span>
+                            )}
+                            {sel.isCurrent && (
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-500">
+                                Current Calendar Month
+                              </span>
+                            )}
+                            {sel.isFuture && !sel.isPaid && (
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-sky-500/20 text-sky-400">
+                                Advance Subscription
+                              </span>
+                            )}
+                            {sel.isPaid && (
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-400">
+                                Already Settled ✓
+                              </span>
+                            )}
+                            {sel.isPendingApproval && (
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/20 text-amber-400">
+                                Notice Under Review ⏳
+                              </span>
+                            )}
+                          </div>
+                          <span className="font-mono font-bold text-xs theme-text-main tabular-nums">
+                            ৳{sel.amountExpected.toLocaleString()}
+                          </span>
+                        </div>
+
+                        {!sel.canSelect && (
+                          <div className="text-[11px] font-medium text-amber-600 dark:text-amber-300 pt-1 border-t border-amber-500/20">
+                            ⚠️ {sel.disabledReason}
+                          </div>
+                        )}
+
+                        {sel.canSelect && (
+                          <div className="text-[11px] theme-text-muted flex justify-between pt-0.5">
+                            <span>Unit Rate: {currentMemberUser.units} {currentMemberUser.units === 1 ? 'unit' : 'units'} × ৳1,000/mo</span>
+                            <span>{sel.amountDue > 0 ? `Unpaid dues: ৳${sel.amountDue.toLocaleString()}` : 'Advance allocation'}</span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }
+
+                  // Multiple months selected breakdown
+                  const totalExpected = selectedMonthKeys.reduce((sum, mk) => {
+                    const opt = periodData?.options.find(o => o.monthKey === mk);
+                    return sum + (opt && opt.amountDue > 0 ? opt.amountDue : monthlyRate);
+                  }, 0);
+
+                  const monthLabels = selectedMonthKeys.map(mk => {
+                    const opt = periodData?.options.find(o => o.monthKey === mk);
+                    return opt ? opt.monthLabel : mk;
+                  });
 
                   return (
-                    <div className={`p-3 rounded-xl border text-xs space-y-1.5 ${
-                      sel.category === 'overdue'
-                        ? 'bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-200'
-                        : sel.isCurrent
-                        ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-900 dark:text-emerald-200'
-                        : sel.isFuture && !sel.isPaid
-                        ? 'bg-sky-500/10 border-sky-500/30 text-sky-900 dark:text-sky-200'
-                        : 'bg-slate-500/10 border-slate-500/25 theme-text-muted'
-                    }`}>
+                    <div className="p-3 rounded-xl border text-xs space-y-2 bg-emerald-500/10 border-emerald-500/30 text-emerald-900 dark:text-emerald-200">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="font-bold theme-text-main text-xs">{sel.monthLabel}</span>
-                          {sel.category === 'overdue' && (
-                            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/20 text-amber-500">
-                              Overdue Month
-                            </span>
-                          )}
-                          {sel.isCurrent && (
-                            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-500">
-                              Current Calendar Month
-                            </span>
-                          )}
-                          {sel.isFuture && !sel.isPaid && (
-                            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-sky-500/20 text-sky-400">
-                              Advance Subscription
-                            </span>
-                          )}
-                          {sel.isPaid && (
-                            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-400">
-                              Already Settled ✓
-                            </span>
-                          )}
-                          {sel.isPendingApproval && (
-                            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/20 text-amber-400">
-                              Notice Under Review ⏳
-                            </span>
-                          )}
+                          <span className="font-bold theme-text-main text-xs">
+                            Multiple Months Payment ({selectedMonthKeys.length} Months)
+                          </span>
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-500">
+                            Combined Notice
+                          </span>
                         </div>
                         <span className="font-mono font-bold text-xs theme-text-main tabular-nums">
-                          ৳{sel.amountExpected.toLocaleString()}
+                          Total: ৳{totalExpected.toLocaleString()}
                         </span>
                       </div>
-
-                      {/* Warning if already paid or under review */}
-                      {!sel.canSelect && (
-                        <div className="text-[11px] font-medium text-amber-600 dark:text-amber-300 pt-1 border-t border-amber-500/20">
-                          ⚠️ {sel.disabledReason}
-                        </div>
-                      )}
-
-                      {sel.canSelect && (
-                        <div className="text-[11px] theme-text-muted flex justify-between pt-0.5">
-                          <span>Unit Rate: {currentMemberUser.units} {currentMemberUser.units === 1 ? 'unit' : 'units'} × ৳1,000/mo</span>
-                          <span>{sel.amountDue > 0 ? `Unpaid dues: ৳${sel.amountDue.toLocaleString()}` : 'Advance allocation'}</span>
-                        </div>
-                      )}
+                      <div className="text-[11px] theme-text-muted">
+                        <strong>Included:</strong> {monthLabels.join(', ')}
+                      </div>
+                      <div className="text-[11px] theme-text-muted flex justify-between pt-0.5 border-t border-emerald-500/20">
+                        <span>Subscription: {currentMemberUser.units} {currentMemberUser.units === 1 ? 'unit' : 'units'} × ৳1,000 × {selectedMonthKeys.length} months</span>
+                        <span className="font-semibold text-emerald-600 dark:text-emerald-400">৳{totalExpected.toLocaleString()}</span>
+                      </div>
                     </div>
                   );
                 })()}
@@ -782,6 +996,9 @@ export const MemberPortal: React.FC = () => {
                     className="theme-input w-full px-3 py-2 rounded-xl font-mono text-xs font-semibold"
                     required
                   />
+                  <span className="text-[10px] theme-text-muted mt-0.5 block">
+                    Calculated total: {currentMemberUser.units * 1000} BDT/mo × {selectedMonthKeys.length} {selectedMonthKeys.length === 1 ? 'month' : 'months'} = ৳{(currentMemberUser.units * 1000 * selectedMonthKeys.length).toLocaleString()}. You can adjust the figure if you transferred a different amount.
+                  </span>
                 </div>
 
                 {/* 4. Payment Method */}
@@ -846,8 +1063,11 @@ export const MemberPortal: React.FC = () => {
                     Cancel
                   </button>
                   {(() => {
-                    const sel = periodData?.options.find(o => o.monthKey === selectedMonthKey);
-                    const canSubmit = sel ? sel.canSelect && amount > 0 : true;
+                    const allValid = selectedMonthKeys.length > 0 && selectedMonthKeys.every(mk => {
+                      const sel = periodData?.options.find(o => o.monthKey === mk);
+                      return sel ? sel.canSelect : true;
+                    });
+                    const canSubmit = allValid && amount > 0;
 
                     return (
                       <button
@@ -859,7 +1079,7 @@ export const MemberPortal: React.FC = () => {
                             : 'bg-slate-700 text-slate-400 cursor-not-allowed opacity-60'
                         }`}
                       >
-                        Submit Notice
+                        Submit Notice ({selectedMonthKeys.length} {selectedMonthKeys.length === 1 ? 'Month' : 'Months'} · ৳{amount.toLocaleString()})
                       </button>
                     );
                   })()}
