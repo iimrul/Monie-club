@@ -233,21 +233,16 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const [investments, setInvestments] = useState<BusinessInvestment[]>(() => {
     try {
-      let deletedIds: string[] = ['inv-prev-1'];
-      const storedDel = localStorage.getItem(`${STORAGE_KEY_PREFIX}_deleted_investments`);
-      if (storedDel) {
-        deletedIds = Array.from(new Set([...deletedIds, ...JSON.parse(storedDel)]));
-      }
       const stored = localStorage.getItem(`${STORAGE_KEY_PREFIX}_investments`);
       if (stored) {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed)) {
-          return parsed.filter(i => !deletedIds.includes(i.id));
+          return parsed.filter(i => i.id !== 'inv-prev-1' && i.id !== 'inv-chittagong-agro-2026');
         }
       }
-      return INITIAL_INVESTMENTS.filter(i => !deletedIds.includes(i.id));
+      return INITIAL_INVESTMENTS.filter(i => i.id !== 'inv-prev-1' && i.id !== 'inv-chittagong-agro-2026');
     } catch {
-      return INITIAL_INVESTMENTS.filter(i => i.id !== 'inv-prev-1');
+      return [];
     }
   });
 
@@ -396,7 +391,7 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
       localStorage.setItem(`${STORAGE_KEY_PREFIX}_fundsAdjustment`, String(adjustment));
       localStorage.setItem(`${STORAGE_KEY_PREFIX}_totalFunds`, String(val));
     } catch {}
-    cloudSaveConfig(val, months);
+    cloudSaveConfig(val, months, adjustment);
   };
 
   // Admin Users & RBAC - Only the two authorized credentials
@@ -501,98 +496,52 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     const unsubMembers = onSnapshot(collection(db, 'members'), snapshot => {
-      if (!snapshot.empty && snapshot.docs.length >= INITIAL_MEMBERS.length) {
+      if (!snapshot.empty) {
         const cloudMembers: Member[] = [];
         snapshot.forEach(docSnap => cloudMembers.push(docSnap.data() as Member));
+        cloudMembers.sort((a, b) => {
+          const numA = parseInt(a.id.replace(/\D/g, '') || '0', 10);
+          const numB = parseInt(b.id.replace(/\D/g, '') || '0', 10);
+          return numA - numB;
+        });
         setMembers(cloudMembers);
       }
     }, handleSnapshotErr('members'));
 
     const unsubPayments = onSnapshot(collection(db, 'monthlyPayments'), snapshot => {
-      if (!snapshot.empty && snapshot.docs.length >= 200) {
+      if (!snapshot.empty) {
         const cloudPayments: MonthlyPayment[] = [];
         snapshot.forEach(docSnap => cloudPayments.push(docSnap.data() as MonthlyPayment));
-        setMonthlyPayments(prev => {
-          if (!prev || prev.length === 0) return cloudPayments;
-          const cloudMap = new Map<string, MonthlyPayment>();
-          cloudPayments.forEach(p => cloudMap.set(p.id, p));
-          return prev.map(localP => {
-            const cloudP = cloudMap.get(localP.id);
-            if (!cloudP) return localP;
-            const localTime = new Date(localP.processedAt || localP.processed_at || 0).getTime();
-            const cloudTime = new Date(cloudP.processedAt || cloudP.processed_at || 0).getTime();
-            return localTime > cloudTime ? localP : cloudP;
-          });
-        });
+        setMonthlyPayments(cloudPayments);
       }
     }, handleSnapshotErr('payments'));
 
     const unsubInvestments = onSnapshot(collection(db, 'investments'), snapshot => {
-      if (!snapshot.empty) {
-        const cloudInv: BusinessInvestment[] = [];
-        snapshot.forEach(docSnap => cloudInv.push(docSnap.data() as BusinessInvestment));
-        let deletedIds: string[] = ['inv-prev-1'];
-        try {
-          const stored = localStorage.getItem(`${STORAGE_KEY_PREFIX}_deleted_investments`);
-          if (stored) deletedIds = Array.from(new Set([...deletedIds, ...JSON.parse(stored)]));
-        } catch {}
-        const filtered = cloudInv.filter(inv => !deletedIds.includes(inv.id));
-        setInvestments(filtered);
-      }
+      const cloudInv: BusinessInvestment[] = [];
+      snapshot.forEach(docSnap => {
+        const inv = docSnap.data() as BusinessInvestment;
+        if (inv.id !== 'inv-prev-1' && inv.id !== 'inv-chittagong-agro-2026') {
+          cloudInv.push(inv);
+        }
+      });
+      setInvestments(cloudInv);
     }, handleSnapshotErr('investments'));
 
     const unsubExpenses = onSnapshot(collection(db, 'expenses'), snapshot => {
-      if (!snapshot.empty) {
-        const cloudExp: ExpenseRecord[] = [];
-        snapshot.forEach(docSnap => cloudExp.push(docSnap.data() as ExpenseRecord));
-
-        let deletedIds: string[] = [];
-        try {
-          const stored = localStorage.getItem(`${STORAGE_KEY_PREFIX}_deleted_expenses`);
-          if (stored) deletedIds = JSON.parse(stored);
-        } catch {}
-
-        setExpenses(prev => {
-          const map = new Map<string, ExpenseRecord>();
-          INITIAL_EXPENSES.filter(e => !deletedIds.includes(e.id)).forEach(e => map.set(e.id, e));
-          if (prev) {
-            prev.filter(e => !deletedIds.includes(e.id)).forEach(e => map.set(e.id, e));
-          }
-          cloudExp.filter(e => !deletedIds.includes(e.id)).forEach(e => map.set(e.id, e));
-          return Array.from(map.values());
-        });
-      }
+      const cloudExp: ExpenseRecord[] = [];
+      snapshot.forEach(docSnap => cloudExp.push(docSnap.data() as ExpenseRecord));
+      setExpenses(cloudExp);
     }, handleSnapshotErr('expenses'));
 
     const unsubFees = onSnapshot(collection(db, 'feeCollections'), snapshot => {
-      if (!snapshot.empty) {
-        const cloudFees: FeeCollection[] = [];
-        snapshot.forEach(docSnap => cloudFees.push(docSnap.data() as FeeCollection));
-
-        setFeeCollections(prev => {
-          const feeMap = new Map<string, FeeCollection>();
-          // Base: official initial records
-          INITIAL_FEE_COLLECTIONS.forEach(f => feeMap.set(f.memberId, f));
-          // Overlay existing local state
-          if (prev && prev.length > 0) {
-            prev.forEach(f => {
-              if (f.status === 'Paid') {
-                feeMap.set(f.memberId, f);
-              }
-            });
-          }
-          // Overlay cloud records: accurately handle both Unpaid and Paid
-          cloudFees.forEach(cf => {
-            if (cf.status === 'Unpaid' || cf.feeAmount === 0) {
-              feeMap.delete(cf.memberId);
-            } else if (cf.status === 'Paid') {
-              feeMap.set(cf.memberId, cf);
-            }
-          });
-
-          return Array.from(feeMap.values());
-        });
-      }
+      const cloudFees: FeeCollection[] = [];
+      snapshot.forEach(docSnap => {
+        const fee = docSnap.data() as FeeCollection;
+        if (fee.status === 'Paid' && (fee.feeAmount || 0) > 0) {
+          cloudFees.push(fee);
+        }
+      });
+      setFeeCollections(cloudFees);
     }, handleSnapshotErr('fees'));
 
     const unsubClaims = onSnapshot(collection(db, 'pendingClaims'), snapshot => {
@@ -656,6 +605,9 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
           // Sort months chronologically
           const sorted = [...data.months].sort((a: any, b: any) => (a.key || '').localeCompare(b.key || ''));
           setMonths(sorted);
+        }
+        if (typeof data.manualFundsAdjustment === 'number') {
+          setManualFundsAdjustment(data.manualFundsAdjustment);
         }
       }
     }, handleSnapshotErr('config'));
@@ -746,6 +698,19 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return changed ? updated : prevMembers;
     });
   }, [monthlyPayments, feeCollections, currentMemberUser]);
+
+  // Strict guard: Inactive members are immediately logged out if active in session
+  useEffect(() => {
+    if (currentMemberUser) {
+      const match = members.find(m => m.id === currentMemberUser.id);
+      if (!match || match.status === 'Inactive') {
+        setCurrentMemberUser(null);
+        try {
+          localStorage.removeItem(`${STORAGE_KEY_PREFIX}_current_member`);
+        } catch {}
+      }
+    }
+  }, [members, currentMemberUser]);
 
   // Dynamically compute summary
   const summary = useMemo<ClubSummary>(() => {
@@ -1285,14 +1250,6 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const deleteInvestment = (id: string) => {
     setInvestments(prev => prev.filter(inv => inv.id !== id));
     cloudDeleteInvestment(id);
-    try {
-      const stored = localStorage.getItem(`${STORAGE_KEY_PREFIX}_deleted_investments`);
-      const list: string[] = stored ? JSON.parse(stored) : ['inv-prev-1'];
-      if (!list.includes(id)) {
-        list.push(id);
-        localStorage.setItem(`${STORAGE_KEY_PREFIX}_deleted_investments`, JSON.stringify(list));
-      }
-    } catch {}
   };
 
   const toggleInvestmentMilestone = (milestoneId: string, investmentId?: string) => {
@@ -1320,14 +1277,6 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const deleteExpense = (id: string) => {
     setExpenses(prev => prev.filter(e => e.id !== id));
     cloudDeleteExpense(id);
-    try {
-      const stored = localStorage.getItem(`${STORAGE_KEY_PREFIX}_deleted_expenses`);
-      const list = stored ? JSON.parse(stored) : [];
-      if (!list.includes(id)) {
-        list.push(id);
-        localStorage.setItem(`${STORAGE_KEY_PREFIX}_deleted_expenses`, JSON.stringify(list));
-      }
-    } catch {}
   };
 
   const addFeeCollection = (feeData: Omit<FeeCollection, 'id'>) => {

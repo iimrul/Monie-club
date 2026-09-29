@@ -153,6 +153,7 @@ export async function seedFirestoreIfEmpty(force = false) {
     // 8. Club Central Config
     await setDoc(doc(db, 'clubConfig', 'main'), {
       totalClubFunds: 382000,
+      manualFundsAdjustment: 0,
       months: MONTHS_CONFIG,
       updatedAt: new Date().toISOString(),
     }, { merge: true });
@@ -348,11 +349,12 @@ export async function cloudDeleteBankProfit(id: string) {
   }
 }
 
-export async function cloudSaveConfig(totalClubFunds: number, months: any[]) {
+export async function cloudSaveConfig(totalClubFunds: number, months: any[], manualFundsAdjustment?: number) {
   if (isQuotaExceeded) return;
   try {
     await setDoc(doc(db, 'clubConfig', 'main'), {
       totalClubFunds,
+      manualFundsAdjustment: manualFundsAdjustment ?? 0,
       months,
       updatedAt: new Date().toISOString()
     }, { merge: true });

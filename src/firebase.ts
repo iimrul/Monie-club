@@ -2,6 +2,7 @@ import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
   initializeFirestore, 
   getFirestore, 
+  setLogLevel,
   doc, 
   setDoc, 
   getDoc, 
@@ -23,9 +24,12 @@ const dbId = firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatab
   ? firebaseConfig.firestoreDatabaseId
   : undefined;
 
-// Initialize Firestore with robust long-polling auto-detection
+// Silence internal Firestore retry logs and warnings from polluting console.error
+setLogLevel('silent');
+
+// Initialize Firestore with forced long-polling to prevent WebSocket connection failures in preview iframes
 export const db = initializeFirestore(app, {
-  experimentalAutoDetectLongPolling: true,
+  experimentalForceLongPolling: true,
 }, dbId);
 
 export const auth = getAuth(app);
