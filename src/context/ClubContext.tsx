@@ -405,8 +405,11 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const stored = localStorage.getItem(`${STORAGE_KEY_PREFIX}_admin_users`);
       if (stored) {
         const parsed: AdminUser[] = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length === 2 && parsed.some(a => a.email === 'admin@monieclub') && parsed.some(a => a.email === 'treasurer@monieclub')) {
-          return parsed;
+        if (Array.isArray(parsed)) {
+          const filtered = parsed.filter(a => a.email === 'admin@monieclub' || a.email === 'treasurer@monieclub');
+          if (filtered.length === 2) {
+            return filtered;
+          }
         }
       }
       return INITIAL_ADMINS;
@@ -435,12 +438,17 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   });
 
-  // Current Logged-in Member (Null by default, requiring mobile number login)
+  // Current Logged-in Member (Null by default, strictly active members only)
   const [currentMemberUser, setCurrentMemberUser] = useState<Member | null>(() => {
     try {
       const stored = localStorage.getItem(`${STORAGE_KEY_PREFIX}_current_member`);
       if (stored) {
-        return JSON.parse(stored);
+        const parsed: Member = JSON.parse(stored);
+        if (parsed && parsed.status === 'Inactive') {
+          localStorage.removeItem(`${STORAGE_KEY_PREFIX}_current_member`);
+          return null;
+        }
+        return parsed;
       }
       return null;
     } catch {
@@ -470,6 +478,11 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Purge legacy mock claims if any exist in cloud
     deleteDoc(doc(db, 'pendingClaims', 'claim_1')).catch(() => {});
     deleteDoc(doc(db, 'pendingClaims', 'claim_2')).catch(() => {});
+    // Purge legacy admin accounts so only the 2 authorized credentials remain
+    deleteDoc(doc(db, 'adminUsers', 'admin_president')).catch(() => {});
+    deleteDoc(doc(db, 'adminUsers', 'admin_secretary')).catch(() => {});
+    deleteDoc(doc(db, 'adminUsers', 'admin_1')).catch(() => {});
+    deleteDoc(doc(db, 'adminUsers', 'admin_2')).catch(() => {});
   }, []);
 
   // 2. Real-time Cloud Firestore Listeners (Ensures all data is saved and synced with cloud)
@@ -598,8 +611,23 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const unsubAdmins = onSnapshot(collection(db, 'adminUsers'), snapshot => {
       if (!snapshot.empty) {
         const cloudAdmins: AdminUser[] = [];
-        snapshot.forEach(docSnap => cloudAdmins.push(docSnap.data() as AdminUser));
-        setAdminUsers(cloudAdmins);
+        const allowedEmails = ['treasurer@monieclub', 'admin@monieclub'];
+        snapshot.forEach(docSnap => {
+          const adm = docSnap.data() as AdminUser;
+          if (adm.email && allowedEmails.includes(adm.email.toLowerCase())) {
+            cloudAdmins.push(adm);
+          } else {
+            // Delete rogue document from cloud to ensure exactly 2 credentials
+            deleteDoc(doc(db, 'adminUsers', docSnap.id)).catch(() => {});
+          }
+        });
+        if (cloudAdmins.length === 2) {
+          setAdminUsers(cloudAdmins);
+        } else {
+          setAdminUsers(INITIAL_ADMINS);
+        }
+      } else {
+        setAdminUsers(INITIAL_ADMINS);
       }
     }, handleSnapshotErr('admins'));
 
@@ -1792,6 +1820,15 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!found) {
       return { success: false, error: 'No active club member found registered with this phone number. If you live abroad, please include your country code (e.g. +966..., +60...).' };
     }
+
+    // Inactive members are strictly barred from logging into the member portal
+    if (found.status === 'Inactive') {
+      return { 
+        success: false, 
+        error: 'আপনার মেম্বারশিপ অ্যাকাউন্টটি বর্তমানে নিষ্ক্রিয় (Inactive)। নিষ্ক্রিয় সদস্যরা মেম্বার পোর্টালে লগইন করতে পারবেন না। প্রয়োজনে ট্রেজারারের সাথে যোগাযোগ করুন। (This membership account is inactive. Inactive members cannot access the portal. Please contact the Treasurer.)' 
+      };
+    }
+
     setCurrentMemberUser(found);
     return { success: true };
   };

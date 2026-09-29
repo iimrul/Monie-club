@@ -138,7 +138,9 @@ export async function seedFirestoreIfEmpty(force = false) {
       await setDoc(doc(db, 'feeCollections', fee.id), sanitizeForFirestore(fee), { merge: true });
     }
 
-    // 6. Admins
+    // 6. Admins (Only 2 authorized credentials: treasurer and admin)
+    await deleteDoc(doc(db, 'adminUsers', 'admin_president')).catch(() => {});
+    await deleteDoc(doc(db, 'adminUsers', 'admin_secretary')).catch(() => {});
     for (const adm of INITIAL_ADMINS) {
       await setDoc(doc(db, 'adminUsers', adm.id), sanitizeForFirestore(adm), { merge: true });
     }

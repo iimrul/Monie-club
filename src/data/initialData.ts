@@ -495,13 +495,13 @@ export function generateInitialMonthlyPayments(): MonthlyPayment[] {
 export const INITIAL_ADMINS: import('../types').AdminUser[] = [
   {
     id: 'admin_treasurer',
-    name: 'Imrul Kaesh Chowdhury',
+    name: 'Treasurer (Imrul Kaesh)',
     email: 'treasurer@monieclub',
     password: 'treasurer@monieclub',
     designation: 'Treasurer',
     role: 'Super Admin',
     canEdit: true,
-    phone: '01822240603',
+    phone: '01863269888',
     createdAt: '2025-10-01',
   },
   {

@@ -16,6 +16,38 @@ export const AdminRBACModal: React.FC<AdminRBACModalProps> = ({ isOpen, onClose 
 
   const isSuperAdmin = currentAdminUser?.role === 'Super Admin' && currentAdminUser?.canEdit;
 
+  // Strictly filter to the two authorized credentials only
+  const authorizedAdmins = React.useMemo(() => {
+    const list = adminUsers.filter(a => 
+      a.email.toLowerCase() === 'treasurer@monieclub' || 
+      a.email.toLowerCase() === 'admin@monieclub'
+    );
+    if (list.length === 2) {
+      // Keep Treasurer first, Admin second
+      return [...list].sort((a) => (a.email.toLowerCase() === 'treasurer@monieclub' ? -1 : 1));
+    }
+    return [
+      {
+        id: 'admin_treasurer',
+        name: 'Treasurer (Imrul Kaesh)',
+        email: 'treasurer@monieclub',
+        designation: 'Treasurer' as const,
+        role: 'Super Admin' as const,
+        canEdit: true,
+        phone: '01863269888',
+      },
+      {
+        id: 'admin_general',
+        name: 'General Admin',
+        email: 'admin@monieclub',
+        designation: 'Admin' as const,
+        role: 'Admin' as const,
+        canEdit: false,
+        phone: '01753102771',
+      }
+    ];
+  }, [adminUsers]);
+
   if (!isOpen) return null;
 
   const handleDesignate = (adminId: string, adminName: string) => {
@@ -75,12 +107,12 @@ export const AdminRBACModal: React.FC<AdminRBACModalProps> = ({ isOpen, onClose 
           <div className="space-y-2.5">
             <div className="flex items-center justify-between">
               <span className="font-semibold theme-text-main">
-                Configured Credentials ({adminUsers.length})
+                Configured Credentials ({authorizedAdmins.length})
               </span>
             </div>
 
             <div className="divide-y theme-border rounded-xl border theme-border overflow-hidden">
-              {adminUsers.map((admin: AdminUser) => {
+              {authorizedAdmins.map((admin: AdminUser) => {
                 const isThisSuperAdmin = admin.role === 'Super Admin';
 
                 return (
