@@ -1,6 +1,12 @@
 import React, { useState, useMemo } from 'react';
 import { Member, MonthlyPayment, PendingPaymentClaim, FeeCollection } from '../types';
 import { MonthInfo } from '../context/ClubContext';
+import { 
+  Language, 
+  toBengaliNumber, 
+  formatCurrency, 
+  translateMonthLabel 
+} from '../utils/memberTranslations';
 
 export interface ActivityRecord {
   id: string;
@@ -27,6 +33,7 @@ interface MemberActivityLogProps {
   pendingClaims: PendingPaymentClaim[];
   feeCollections: FeeCollection[];
   months?: MonthInfo[];
+  lang?: Language;
   onOpenSubmitNotice?: () => void;
 }
 
@@ -36,6 +43,7 @@ export const MemberActivityLog: React.FC<MemberActivityLogProps> = ({
   pendingClaims,
   feeCollections,
   months,
+  lang = 'bn',
   onOpenSubmitNotice,
 }) => {
   const [filterType, setFilterType] = useState<'all' | 'paid' | 'approved' | 'pending' | 'fees'>('all');
@@ -63,7 +71,9 @@ export const MemberActivityLog: React.FC<MemberActivityLogProps> = ({
       list.push({
         id: `pay-${p.id}`,
         sourceType: 'monthly_payment',
-        title: `${p.monthLabel} Subscription Payment`,
+        title: lang === 'bn' 
+          ? `${translateMonthLabel(p.monthLabel, lang)} কিস্তির জমা` 
+          : `${p.monthLabel} Subscription Payment`,
         category: 'Monthly Subscription',
         amount: p.amountPaid,
         date: dateStr,
@@ -71,8 +81,8 @@ export const MemberActivityLog: React.FC<MemberActivityLogProps> = ({
         paymentMethod: p.paymentMethod || 'Club AC',
         referenceId: p.receiptNumber || `MC-${p.monthKey}-${member.id}`,
         monthLabel: p.monthLabel,
-        notes: p.notes || 'Officially recorded and credited to Monie Club master ledger',
-        verifiedBy: 'Club Treasurer',
+        notes: p.notes || (lang === 'bn' ? 'অফিসিয়ালি ক্লাবের মূল লেজারে যুক্ত ও ক্রেডিট করা হয়েছে' : 'Officially recorded and credited to Monie Club master ledger'),
+        verifiedBy: lang === 'bn' ? 'ক্লাব ট্রেজারার' : 'Club Treasurer',
         timestamp: time,
         units: p.units,
       });
@@ -97,7 +107,9 @@ export const MemberActivityLog: React.FC<MemberActivityLogProps> = ({
       list.push({
         id: `claim-${c.id}`,
         sourceType: 'claim_submission',
-        title: `${c.monthLabel} Deposit Notice`,
+        title: lang === 'bn' 
+          ? `${translateMonthLabel(c.monthLabel, lang)} জমার নোটিশ` 
+          : `${c.monthLabel} Deposit Notice`,
         category: 'Payment Notice',
         amount: c.amount,
         date: dateStr,
@@ -106,7 +118,7 @@ export const MemberActivityLog: React.FC<MemberActivityLogProps> = ({
         referenceId: c.trxId || `TX-${c.id}`,
         monthLabel: c.monthLabel,
         notes: c.notes,
-        verifiedBy: c.reviewedBy || (c.status === 'Approved' ? 'Treasurer' : undefined),
+        verifiedBy: c.reviewedBy || (c.status === 'Approved' ? (lang === 'bn' ? 'ট্রেজারার' : 'Treasurer') : undefined),
         verifiedAt: c.reviewedAt,
         rejectionReason: c.rejectionReason,
         timestamp: time,
@@ -119,46 +131,47 @@ export const MemberActivityLog: React.FC<MemberActivityLogProps> = ({
       f => f.memberId === member.id && f.status === 'Paid'
     );
     myFees.forEach(f => {
-      const dateStr = f.date || member.registrationDate || '2025-12-30';
-      let time = new Date(dateStr).getTime();
-      if (isNaN(time)) time = new Date('2025-12-30').getTime();
+      const dateStr = f.date || '2025-12-30';
+      const time = new Date(dateStr).getTime() || Date.now() - 86400000 * 200;
 
       list.push({
         id: `fee-${f.id}`,
         sourceType: 'fee_collection',
-        title: 'Club Admission & Registration Fee',
+        title: lang === 'bn' ? 'সদস্য ভর্তি ও প্রশাসনিক ফি' : 'Registration & Administrative Fee',
         category: 'Registration Fee',
         amount: f.feeAmount,
         date: dateStr,
         status: 'Paid',
         paymentMethod: f.paymentMethod || 'Cash',
-        referenceId: f.receiptNo || `REG-${member.id}`,
-        notes: f.notes || f.purpose || 'Official member admission fee (৳100 per unit)',
-        verifiedBy: 'Executive Committee',
+        referenceId: f.receiptNo || `FEE-${f.memberId}`,
+        notes: f.notes || (lang === 'bn' ? 'সদস্যপদ কনফার্মেশন ও অফিসিয়াল ডকুমেন্টেশন ফি' : 'Membership confirmation and official documentation fee'),
+        verifiedBy: lang === 'bn' ? 'নির্বাহী কমিটি' : 'Executive Committee',
         timestamp: time,
         units: f.units || member.units,
       });
     });
 
-    // D. Inactive Settlement (if settled)
+    // D. Inactive Member Settlement Record (if inactive)
     if (member.status === 'Inactive' && member.inactiveDate) {
+      const time = new Date(member.inactiveDate).getTime();
       list.push({
         id: `settle-${member.id}`,
         sourceType: 'settlement',
-        title: 'Member Account Settlement & Departure',
+        title: lang === 'bn' ? 'মেম্বারশিপ হিসাব নিকাশ নিষ্পত্তি' : 'Final Membership Settlement & Clearance',
         category: 'Account Settlement',
         amount: 0,
         date: member.inactiveDate,
         status: 'Approved',
-        notes: member.leaveReason || member.notes || 'Settled and account balance cleared',
-        verifiedBy: 'Club Council',
-        timestamp: new Date(member.inactiveDate).getTime(),
+        referenceId: `SETTLE-${member.id}`,
+        notes: member.leaveReason || (lang === 'bn' ? 'হিসাব সম্পন্ন' : 'Account finalized and settled'),
+        verifiedBy: lang === 'bn' ? 'ট্রেজারার ও নির্বাহী কমিটি' : 'Treasurer & Executive Committee',
+        timestamp: time,
         units: member.units,
       });
     }
 
     return list;
-  }, [member, monthlyPayments, pendingClaims, feeCollections]);
+  }, [monthlyPayments, pendingClaims, feeCollections, member, months, lang]);
 
   // 2. Metrics calculated from activities
   const metrics = useMemo(() => {

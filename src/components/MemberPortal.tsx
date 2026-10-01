@@ -8,6 +8,13 @@ import {
   compareMonthKeys,
   OFFICIAL_CLUB_NAME 
 } from '../services/paymentDueManager';
+import { 
+  Language, 
+  memberTranslations, 
+  formatCurrency, 
+  toBengaliNumber, 
+  translateMonthLabel 
+} from '../utils/memberTranslations';
 
 export const MemberPortal: React.FC = () => {
   const { 
@@ -25,6 +32,27 @@ export const MemberPortal: React.FC = () => {
     theme,
     setTheme
   } = useClub();
+
+  // Language state: Bangla-First UI default with persistence in localStorage
+  const [lang, setLang] = useState<Language>(() => {
+    try {
+      const stored = localStorage.getItem('monie_club_lang');
+      if (stored === 'en' || stored === 'bn') return stored;
+      return 'bn';
+    } catch {
+      return 'bn';
+    }
+  });
+
+  const toggleLanguage = () => {
+    const nextLang = lang === 'bn' ? 'en' : 'bn';
+    setLang(nextLang);
+    try {
+      localStorage.setItem('monie_club_lang', nextLang);
+    } catch {}
+  };
+
+  const t = memberTranslations[lang];
 
   // Tab mode within Member Portal: 'activity' (default) | 'ledger' | 'notices' | 'treasury'
   const [portalTab, setPortalTab] = useState<'activity' | 'ledger' | 'notices' | 'treasury'>('activity');
@@ -238,14 +266,25 @@ export const MemberPortal: React.FC = () => {
             <div className="w-2.5 h-2.5 rounded-full bg-emerald-500"></div>
             <div>
               <span className="font-bold text-sm theme-text-main">{OFFICIAL_CLUB_NAME}</span>
-              <span className="text-[11px] theme-text-muted ml-2 font-mono">Member Portal</span>
+              <span className="text-[11px] theme-text-muted ml-2 font-mono">{t.portalBadge}</span>
             </div>
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
             <span className="text-xs theme-text-muted hidden sm:inline">
-              <strong className="theme-text-main">{currentMemberUser.name}</strong> ({currentMemberUser.units} {currentMemberUser.units === 1 ? 'unit' : 'units'})
+              <strong className="theme-text-main">{currentMemberUser.name}</strong> ({lang === 'bn' ? toBengaliNumber(currentMemberUser.units) : currentMemberUser.units} {t.unitsLabel})
             </span>
+
+            {/* Language Switcher: Bangla First */}
+            <button
+              onClick={toggleLanguage}
+              className="px-2.5 py-1 rounded-lg theme-input text-xs font-semibold cursor-pointer flex items-center gap-1 hover:border-emerald-500/50 transition-colors shadow-2xs"
+              title={lang === 'bn' ? 'Switch to English' : 'বাংলায় পরিবর্তন করুন'}
+            >
+              <span className={lang === 'bn' ? 'text-emerald-500 font-bold' : 'theme-text-muted'}>বাং</span>
+              <span className="theme-text-muted text-[10px]">/</span>
+              <span className={lang === 'en' ? 'text-emerald-500 font-bold' : 'theme-text-muted'}>EN</span>
+            </button>
 
             <button
               onClick={() => setTheme(theme === 'dark' || theme === 'midnight' ? 'light' : 'midnight')}
@@ -259,7 +298,7 @@ export const MemberPortal: React.FC = () => {
               onClick={memberLogout}
               className="px-3 py-1 text-xs font-medium text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer"
             >
-              Sign Out
+              {t.logout}
             </button>
           </div>
         </div>
@@ -279,11 +318,11 @@ export const MemberPortal: React.FC = () => {
                 {currentMemberUser.name}
               </h1>
               <div className="text-xs theme-text-muted flex flex-wrap items-center gap-2 mt-0.5">
-                <span>{currentMemberUser.units} {currentMemberUser.units === 1 ? 'Unit' : 'Units'} (৳{monthlyRate.toLocaleString()}/mo)</span>
+                <span>{lang === 'bn' ? toBengaliNumber(currentMemberUser.units) : currentMemberUser.units} {t.unitsLabel} ({formatCurrency(monthlyRate, lang)} {t.perMonth})</span>
                 <span>·</span>
                 <span className="font-mono">{currentMemberUser.contactNumber}</span>
                 <span>·</span>
-                <span>Blood: {currentMemberUser.bloodGroup}</span>
+                <span>{t.bloodGroup}: {currentMemberUser.bloodGroup}</span>
               </div>
             </div>
           </div>
@@ -298,7 +337,7 @@ export const MemberPortal: React.FC = () => {
             className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl transition-colors cursor-pointer shadow-xs flex items-center justify-center gap-1.5 self-start sm:self-auto"
           >
             <span>+</span>
-            <span>Submit Payment Notice</span>
+            <span>{t.submitDepositNotice}</span>
           </button>
         </div>
 
@@ -306,40 +345,46 @@ export const MemberPortal: React.FC = () => {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
           
           <div className="theme-card p-4 rounded-xl border theme-border">
-            <div className="text-xs theme-text-muted font-medium">Total Deposited</div>
+            <div className="text-xs theme-text-muted font-medium">{t.totalPaid}</div>
             <div className="text-2xl sm:text-3xl font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-1 tabular-nums">
-              ৳{totalPaid.toLocaleString()}
+              {formatCurrency(totalPaid, lang)}
             </div>
             <div className="text-[11px] theme-text-muted mt-1">
-              Deposited to date
+              {lang === 'bn' ? 'চলতি সময় পর্যন্ত মোট জমা' : 'Deposited to date'}
             </div>
           </div>
 
           <div className="theme-card p-4 rounded-xl border theme-border">
-            <div className="text-xs theme-text-muted font-medium">Pending Dues</div>
+            <div className="text-xs theme-text-muted font-medium">{t.totalDue}</div>
             <div className={`text-2xl sm:text-3xl font-bold font-mono mt-1 tabular-nums ${
               totalDue > 0 ? 'text-amber-600 dark:text-amber-400' : 'theme-text-main'
             }`}>
-              ৳{totalDue.toLocaleString()}
+              {formatCurrency(totalDue, lang)}
             </div>
             <div className="text-[11px] theme-text-muted mt-1">
-              {currentMemberUser.monthsPending === 0 ? 'All cleared' : `${currentMemberUser.monthsPending} month(s) pending`}
+              {currentMemberUser.monthsPending === 0 
+                ? t.allClear 
+                : (lang === 'bn' ? `${toBengaliNumber(currentMemberUser.monthsPending)} মাসের কিস্তি বকেয়া` : `${currentMemberUser.monthsPending} month(s) pending`)}
             </div>
           </div>
 
           <div className="theme-card p-4 rounded-xl border theme-border">
-            <div className="text-xs theme-text-muted font-medium">Projected Profit</div>
+            <div className="text-xs theme-text-muted font-medium">{t.ventureShare}</div>
             <div className="text-xl sm:text-2xl font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-1 tabular-nums">
               {activeVentures.length === 0 ? (
                 '+৳0'
               ) : hasShareRange ? (
-                `+৳${myMinShareProfit.toLocaleString()} – ৳${myMaxShareProfit.toLocaleString()}`
+                `+${formatCurrency(myMinShareProfit, lang)} – ${formatCurrency(myMaxShareProfit, lang)}`
               ) : (
-                `+৳${Math.round(myExpectedShareProfit).toLocaleString()}`
+                `+${formatCurrency(Math.round(myExpectedShareProfit), lang)}`
               )}
             </div>
             <div className="text-[11px] theme-text-muted mt-1">
-              {activeVentures.length === 0 ? 'No active ventures' : hasShareRange ? 'Estimated ROI range' : 'From active ventures'}
+              {activeVentures.length === 0 
+                ? t.noActiveVenture 
+                : hasShareRange 
+                ? (lang === 'bn' ? 'চলমান ভেঞ্চার হতে সম্ভাব্য ROI রেঞ্জ' : 'Estimated ROI range') 
+                : t.dividendShareNotice}
             </div>
           </div>
 
@@ -355,7 +400,7 @@ export const MemberPortal: React.FC = () => {
                 : 'theme-text-muted hover:theme-text-main hover:bg-black/5 dark:hover:bg-white/5'
             }`}
           >
-            Activity Log
+            {t.tabActivity}
           </button>
 
           <button
@@ -366,7 +411,7 @@ export const MemberPortal: React.FC = () => {
                 : 'theme-text-muted hover:theme-text-main hover:bg-black/5 dark:hover:bg-white/5'
             }`}
           >
-            Ledger
+            {t.tabLedger}
           </button>
 
           <button
@@ -377,10 +422,10 @@ export const MemberPortal: React.FC = () => {
                 : 'theme-text-muted hover:theme-text-main hover:bg-black/5 dark:hover:bg-white/5'
             }`}
           >
-            <span>Notices</span>
+            <span>{t.tabNotices}</span>
             {myClaims.length > 0 && (
               <span className="px-1.5 py-0.2 text-[10px] font-mono rounded-full bg-emerald-500/20 text-emerald-400">
-                {myClaims.length}
+                {lang === 'bn' ? toBengaliNumber(myClaims.length) : myClaims.length}
               </span>
             )}
           </button>
@@ -393,7 +438,7 @@ export const MemberPortal: React.FC = () => {
                 : 'theme-text-muted hover:theme-text-main hover:bg-black/5 dark:hover:bg-white/5'
             }`}
           >
-            Club Treasury
+            {t.tabTreasury}
           </button>
         </div>
 
@@ -405,6 +450,7 @@ export const MemberPortal: React.FC = () => {
             pendingClaims={pendingClaims}
             feeCollections={feeCollections}
             months={months}
+            lang={lang}
             onOpenSubmitNotice={() => {
               if (dueMonths.length > 0) {
                 setSelectedMonthKey(dueMonths[0].monthKey);
@@ -419,10 +465,12 @@ export const MemberPortal: React.FC = () => {
           <div className="theme-card p-5 rounded-2xl border theme-border space-y-4">
             <div className="flex items-center justify-between pb-3 border-b theme-border">
               <h2 className="text-sm font-bold theme-text-main">
-                Monthly Subscription Ledger
+                {t.ledgerTitle}
               </h2>
               <span className="text-[11px] theme-text-muted font-mono">
-                {myPayments.filter(p => p.status === 'Paid').length} of {myPayments.length} Paid
+                {lang === 'bn' 
+                  ? `${toBengaliNumber(myPayments.filter(p => p.status === 'Paid').length)}টি পরিশোধিত (${toBengaliNumber(myPayments.length)} মাসের মধ্যে)`
+                  : `${myPayments.filter(p => p.status === 'Paid').length} of ${myPayments.length} Paid`}
               </span>
             </div>
 
@@ -430,13 +478,13 @@ export const MemberPortal: React.FC = () => {
               <table className="w-full text-left text-xs">
                 <thead>
                   <tr className="border-b theme-border text-xs theme-text-muted">
-                    <th className="py-2.5 font-medium">Month</th>
-                    <th className="py-2.5 font-medium">Target</th>
-                    <th className="py-2.5 font-medium">Paid</th>
-                    <th className="py-2.5 font-medium">Status</th>
-                    <th className="py-2.5 font-medium">Payment Date</th>
-                    <th className="py-2.5 font-medium">Method</th>
-                    <th className="py-2.5 font-medium text-right">Action</th>
+                    <th className="py-2.5 font-medium">{t.monthCol}</th>
+                    <th className="py-2.5 font-medium">{t.expectedCol}</th>
+                    <th className="py-2.5 font-medium">{t.paidCol}</th>
+                    <th className="py-2.5 font-medium">{t.statusCol}</th>
+                    <th className="py-2.5 font-medium">{t.paymentDateCol}</th>
+                    <th className="py-2.5 font-medium">{t.methodCol}</th>
+                    <th className="py-2.5 font-medium text-right">{lang === 'bn' ? 'পদক্ষেপ' : 'Action'}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y theme-border">
@@ -447,13 +495,13 @@ export const MemberPortal: React.FC = () => {
                     return (
                       <tr key={p.id} className="hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
                         <td className="py-3 font-semibold theme-text-main">
-                          {p.monthLabel}
+                          {translateMonthLabel(p.monthLabel, lang)}
                         </td>
                         <td className="py-3 font-mono theme-text-muted tabular-nums">
-                          ৳{p.amountExpected.toLocaleString()}
+                          {formatCurrency(p.amountExpected, lang)}
                         </td>
                         <td className="py-3 font-mono font-semibold tabular-nums theme-text-main">
-                          ৳{p.amountPaid.toLocaleString()}
+                          {formatCurrency(p.amountPaid, lang)}
                         </td>
                         <td className="py-3">
                           <span className={`px-2 py-0.5 text-[10px] font-medium rounded-full ${
@@ -463,11 +511,11 @@ export const MemberPortal: React.FC = () => {
                               ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400' 
                               : 'bg-slate-500/15 theme-text-muted'
                           }`}>
-                            {p.status}
+                            {isPaid ? t.paidBadge : isDue ? t.dueBadge : p.status}
                           </span>
                         </td>
                         <td className="py-3 text-xs theme-text-muted font-mono">
-                          {p.paymentDate || '—'}
+                          {p.paymentDate ? (lang === 'bn' ? toBengaliNumber(p.paymentDate) : p.paymentDate) : '—'}
                         </td>
                         <td className="py-3 text-xs theme-text-muted">
                           {p.paymentMethod || '—'}
@@ -482,12 +530,12 @@ export const MemberPortal: React.FC = () => {
                               }}
                               className="px-2.5 py-1 text-[11px] font-medium text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 rounded-lg transition-colors cursor-pointer"
                             >
-                              Submit Notice →
+                              {lang === 'bn' ? 'নোটিশ দিন →' : 'Submit Notice →'}
                             </button>
                           )}
                           {isPaid && (
                             <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
-                              ✓ Verified
+                              {lang === 'bn' ? '✓ যাচাইকৃত' : '✓ Verified'}
                             </span>
                           )}
                         </td>
@@ -505,7 +553,9 @@ export const MemberPortal: React.FC = () => {
           <div className="theme-card p-5 rounded-2xl border theme-border space-y-4">
             <div className="flex items-center justify-between pb-3 border-b theme-border">
               <h2 className="text-sm font-bold theme-text-main">
-                Payment Submission Notices ({myClaims.length})
+                {lang === 'bn' 
+                  ? `পেমেন্ট জমার নোটিশ (${toBengaliNumber(myClaims.length)})`
+                  : `Payment Submission Notices (${myClaims.length})`}
               </h2>
               <button
                 onClick={() => {
@@ -516,13 +566,13 @@ export const MemberPortal: React.FC = () => {
                 }}
                 className="px-3 py-1.5 rounded-xl text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 transition-colors cursor-pointer"
               >
-                + New Notice
+                + {lang === 'bn' ? 'নতুন নোটিশ' : 'New Notice'}
               </button>
             </div>
 
             {myClaims.length === 0 ? (
               <div className="p-8 text-center theme-text-muted text-xs">
-                You have not submitted any payment notices yet.
+                {lang === 'bn' ? 'আপনি এখনো কোনো পেমেন্ট নোটিশ জমা দেননি।' : 'You have not submitted any payment notices yet.'}
               </div>
             ) : (
               <div className="space-y-2.5 text-xs">
@@ -534,10 +584,10 @@ export const MemberPortal: React.FC = () => {
                     <div key={claim.id} className="p-3.5 rounded-xl border theme-border theme-card-subtle flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
                       <div>
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-semibold theme-text-main">{claim.monthLabel}</span>
+                          <span className="font-semibold theme-text-main">{translateMonthLabel(claim.monthLabel, lang)}</span>
                           {claim.monthKeys && claim.monthKeys.length > 1 && (
                             <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-sky-500/20 text-sky-600 dark:text-sky-400">
-                              {claim.monthKeys.length} Months
+                              {lang === 'bn' ? `${toBengaliNumber(claim.monthKeys.length)} মাস` : `${claim.monthKeys.length} Months`}
                             </span>
                           )}
                           <span className={`px-2 py-0.5 text-[10px] font-medium rounded-full ${
@@ -547,17 +597,17 @@ export const MemberPortal: React.FC = () => {
                               ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400' 
                               : 'bg-rose-500/20 text-rose-600 dark:text-rose-400'
                           }`}>
-                            {claim.status}
+                            {lang === 'bn' ? (isPending ? 'যাচাইয়ের অপেক্ষায়' : isApproved ? 'অনুমোদিত' : 'প্রত্যাখ্যাত') : claim.status}
                           </span>
                         </div>
                         <div className="text-[11px] theme-text-muted mt-0.5 flex flex-wrap items-center gap-2">
-                          <span>Method: {claim.paymentMethod}</span>
+                          <span>{t.paymentMethod}: {claim.paymentMethod}</span>
                           {claim.trxId && <span>· Trx ID: <strong className="font-mono">{claim.trxId}</strong></span>}
-                          <span>· Submitted: {new Date(claim.submittedAt).toLocaleDateString()}</span>
+                          <span>· {lang === 'bn' ? 'জমার তারিখ:' : 'Submitted:'} {lang === 'bn' ? toBengaliNumber(new Date(claim.submittedAt).toLocaleDateString()) : new Date(claim.submittedAt).toLocaleDateString()}</span>
                         </div>
                         {isApproved && (
                           <div className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium mt-1">
-                            ✓ Verified by Treasurer & credited to your ledger
+                            {lang === 'bn' ? '✓ ট্রেজারার যাচাই করে আপনার লেজারে জমা করেছেন' : '✓ Verified by Treasurer & credited to your ledger'}
                           </div>
                         )}
                         {claim.status === 'Rejected' && (
@@ -568,7 +618,7 @@ export const MemberPortal: React.FC = () => {
                       </div>
 
                       <div className="font-mono font-bold text-sm text-emerald-600 dark:text-emerald-400 tabular-nums self-start sm:self-auto">
-                        ৳{claim.amount.toLocaleString()}
+                        {formatCurrency(claim.amount, lang)}
                       </div>
                     </div>
                   );
@@ -585,47 +635,47 @@ export const MemberPortal: React.FC = () => {
             <div className="theme-card p-5 rounded-2xl border theme-border space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b theme-border gap-1">
                 <h2 className="text-sm font-bold theme-text-main">
-                  Club Treasury & Investment Overview
+                  {t.treasuryTitle}
                 </h2>
                 <span className="text-[11px] font-mono text-emerald-600 dark:text-emerald-400 font-semibold self-start sm:self-auto">
-                  Total Capital: ৳{summary.totalClubFunds.toLocaleString()}
+                  {t.totalClubFunds}: {formatCurrency(summary.totalClubFunds, lang)}
                 </span>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
                 <div className="theme-card-subtle p-3.5 rounded-xl border theme-border">
-                  <span className="theme-text-muted block text-[11px]">Central Liquid Reserves</span>
+                  <span className="theme-text-muted block text-[11px]">{t.liquidReserves}</span>
                   <span className="text-lg font-bold font-mono theme-text-main mt-0.5 block tabular-nums">
-                    ৳{summary.liquidReserves.toLocaleString()}
+                    {formatCurrency(summary.liquidReserves, lang)}
                   </span>
-                  <span className="text-[10px] theme-text-muted">Available in club bank accounts</span>
+                  <span className="text-[10px] theme-text-muted">{lang === 'bn' ? 'ক্লাব ব্যাংক অ্যাকাউন্টে জমা আছে' : 'Available in club bank accounts'}</span>
                 </div>
 
                 <div className="theme-card-subtle p-3.5 rounded-xl border theme-border">
-                  <span className="theme-text-muted block text-[11px]">Deployed in Business Venture</span>
+                  <span className="theme-text-muted block text-[11px]">{t.investedFunds}</span>
                   <span className="text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-0.5 block tabular-nums">
-                    ৳{summary.investedFunds.toLocaleString()}
+                    {formatCurrency(summary.investedFunds, lang)}
                   </span>
                   <span className="text-[10px] theme-text-muted">
                     {activeVentures.length === 1 
-                      ? `Partner: ${activeVentures[0].partnerOrVenture}` 
+                      ? `${t.partnerOrBiz}: ${activeVentures[0].partnerOrVenture}` 
                       : activeVentures.length > 1 
-                      ? `${activeVentures.length} Active Projects` 
-                      : 'No active deployment'}
+                      ? (lang === 'bn' ? `${toBengaliNumber(activeVentures.length)}টি প্রজেক্ট চলমান` : `${activeVentures.length} Active Projects`)
+                      : t.noActiveVenture}
                   </span>
                 </div>
 
                 <div className="theme-card-subtle p-3.5 rounded-xl border theme-border">
-                  <span className="theme-text-muted block text-[11px]">Expected Venture Profit</span>
+                  <span className="theme-text-muted block text-[11px]">{t.ventureShare}</span>
                   <span className="text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-0.5 block tabular-nums">
-                    +৳{summary.expectedVentureProfit.toLocaleString()}
+                    +{formatCurrency(summary.expectedVentureProfit, lang)}
                   </span>
                   <span className="text-[10px] theme-text-muted">
                     {activeVentures.length === 1 && activeVentures[0].maturityDate 
-                      ? `Maturity: ${activeVentures[0].maturityDate}`
+                      ? `${lang === 'bn' ? 'মেয়াদ:' : 'Maturity:'} ${lang === 'bn' ? toBengaliNumber(activeVentures[0].maturityDate) : activeVentures[0].maturityDate}`
                       : activeVentures.length > 1
-                      ? `Total Return: ৳${(summary.investedFunds + summary.expectedVentureProfit).toLocaleString()}`
-                      : 'Awaiting deployment'}
+                      ? `${t.projectedReturn}: ${formatCurrency(summary.investedFunds + summary.expectedVentureProfit, lang)}`
+                      : (lang === 'bn' ? 'বিনিয়োগের অপেক্ষায়' : 'Awaiting deployment')}
                   </span>
                 </div>
               </div>
@@ -634,7 +684,7 @@ export const MemberPortal: React.FC = () => {
               {activeVentures.length > 0 ? (
                 <div className="space-y-2 pt-2 border-t theme-border">
                   <span className="text-[11px] font-semibold theme-text-muted block uppercase tracking-wider">
-                    Active Deployed Ventures ({activeVentures.length})
+                    {t.activeVenturesTitle} ({lang === 'bn' ? toBengaliNumber(activeVentures.length) : activeVentures.length})
                   </span>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {activeVentures.map(v => (
@@ -642,18 +692,18 @@ export const MemberPortal: React.FC = () => {
                         <div className="flex items-start justify-between gap-2">
                           <div>
                             <div className="font-bold theme-text-main text-xs">{v.title}</div>
-                            <div className="text-[11px] theme-text-muted">Partner: {v.partnerOrVenture}</div>
+                            <div className="text-[11px] theme-text-muted">{t.partnerOrBiz}: {v.partnerOrVenture}</div>
                           </div>
                           <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
-                            Active
+                            {lang === 'bn' ? 'চলমান' : 'Active'}
                           </span>
                         </div>
                         <div className="flex items-center justify-between text-[11px] pt-1 border-t theme-border font-mono">
-                          <span className="theme-text-muted">Deployed: ৳{v.principalAmount.toLocaleString()}</span>
+                          <span className="theme-text-muted">{lang === 'bn' ? 'বিনিয়োগ:' : 'Deployed:'} {formatCurrency(v.principalAmount, lang)}</span>
                           <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
                             {v.profitMode === 'range' && v.minProfit !== undefined && v.maxProfit !== undefined && v.minProfit !== v.maxProfit
-                              ? `+৳${v.minProfit.toLocaleString()} – ৳${v.maxProfit.toLocaleString()} (${v.minRoiPercent}%–${v.maxRoiPercent}%)`
-                              : `+৳${v.expectedProfit.toLocaleString()} profit`}
+                              ? `+${formatCurrency(v.minProfit, lang)} – ${formatCurrency(v.maxProfit, lang)} (${lang === 'bn' ? toBengaliNumber(v.minRoiPercent ?? 10) : v.minRoiPercent}%–${lang === 'bn' ? toBengaliNumber(v.maxRoiPercent ?? 12.5) : v.maxRoiPercent}%)`
+                              : `+${formatCurrency(v.expectedProfit, lang)}`}
                           </span>
                         </div>
                       </div>
@@ -662,7 +712,7 @@ export const MemberPortal: React.FC = () => {
                 </div>
               ) : (
                 <div className="p-3 rounded-xl border theme-border text-center text-xs theme-text-muted">
-                  No business ventures are currently deployed. All funds are preserved in liquid bank reserves.
+                  {t.noActiveVenture}
                 </div>
               )}
             </div>
@@ -671,15 +721,15 @@ export const MemberPortal: React.FC = () => {
             <div className="theme-card p-5 rounded-2xl border theme-border space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b theme-border gap-1">
                 <h2 className="text-sm font-bold theme-text-main">
-                  Membership Fees & Operating Expenses
+                  {t.totalOperatingCosts}
                 </h2>
                 <div className="text-[11px] font-mono text-right">
-                  <span className="theme-text-muted">Fee Pool: </span>
-                  <strong className="theme-text-main">৳{totalFeeCollected.toLocaleString()}</strong>
-                  <span className="theme-text-muted"> · Spent: </span>
-                  <strong className="text-rose-500">৳{totalExpensesAmount.toLocaleString()}</strong>
-                  <span className="theme-text-muted"> · Net: </span>
-                  <strong className="text-emerald-500">৳{feeBalance.toLocaleString()}</strong>
+                  <span className="theme-text-muted">{lang === 'bn' ? 'ফি ফান্ড:' : 'Fee Pool:'} </span>
+                  <strong className="theme-text-main">{formatCurrency(totalFeeCollected, lang)}</strong>
+                  <span className="theme-text-muted"> · {lang === 'bn' ? 'ব্যয়:' : 'Spent:'} </span>
+                  <strong className="text-rose-500">{formatCurrency(totalExpensesAmount, lang)}</strong>
+                  <span className="theme-text-muted"> · {lang === 'bn' ? 'উদ্বৃত্ত:' : 'Net:'} </span>
+                  <strong className="text-emerald-500">{formatCurrency(feeBalance, lang)}</strong>
                 </div>
               </div>
 
@@ -687,10 +737,10 @@ export const MemberPortal: React.FC = () => {
                 <table className="w-full text-left text-xs">
                   <thead>
                     <tr className="border-b theme-border text-xs theme-text-muted">
-                      <th className="py-2 font-medium">Expense Item</th>
-                      <th className="py-2 font-medium">Category</th>
-                      <th className="py-2 font-medium">Date</th>
-                      <th className="py-2 font-medium text-right">Cost</th>
+                      <th className="py-2 font-medium">{lang === 'bn' ? 'খরচের বিবরণ' : 'Expense Item'}</th>
+                      <th className="py-2 font-medium">{lang === 'bn' ? 'ক্যাটাগরি' : 'Category'}</th>
+                      <th className="py-2 font-medium">{lang === 'bn' ? 'তারিখ' : 'Date'}</th>
+                      <th className="py-2 font-medium text-right">{lang === 'bn' ? 'পরিমাণ' : 'Cost'}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y theme-border">
@@ -698,9 +748,9 @@ export const MemberPortal: React.FC = () => {
                       <tr key={exp.id} className="hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
                         <td className="py-2.5 font-medium theme-text-main">{exp.title}</td>
                         <td className="py-2.5 theme-text-muted">{exp.category}</td>
-                        <td className="py-2.5 font-mono theme-text-muted">{exp.date}</td>
+                        <td className="py-2.5 font-mono theme-text-muted">{lang === 'bn' ? toBengaliNumber(exp.date) : exp.date}</td>
                         <td className="py-2.5 font-mono font-semibold text-right theme-text-main tabular-nums">
-                          ৳{exp.amount.toLocaleString()}
+                          {formatCurrency(exp.amount, lang)}
                         </td>
                       </tr>
                     ))}
@@ -728,10 +778,10 @@ export const MemberPortal: React.FC = () => {
             <div className="p-3.5 sm:p-4 border-b theme-border flex items-center justify-between shrink-0">
               <div>
                 <h3 className="font-bold text-sm theme-text-main">
-                  Submit Payment Notice
+                  {t.claimModalTitle}
                 </h3>
                 <p className="text-[11px] theme-text-muted mt-0.5">
-                  Record and notify the Treasurer of your subscription deposit
+                  {t.claimModalSubtitle}
                 </p>
               </div>
               <button
@@ -748,10 +798,12 @@ export const MemberPortal: React.FC = () => {
                   ✓
                 </div>
                 <div className="font-bold text-sm theme-text-main">
-                  Payment Notice Submitted!
+                  {t.submittedSuccess}
                 </div>
                 <p className="text-xs theme-text-muted">
-                  Your deposit details have been recorded with submission date {paymentDate} and forwarded to the Treasurer for verification.
+                  {lang === 'bn' 
+                    ? `আপনার জমাকৃত কিস্তির তথ্য সফলভাবে জমা হয়েছে (তারিখ: ${toBengaliNumber(paymentDate)})। ট্রেজারার ব্যাংক স্টেটমেন্ট যাচাই করে অনুমোদন করবেন।`
+                    : `Your deposit details have been recorded with submission date ${paymentDate} and forwarded to the Treasurer for verification.`}
                 </p>
               </div>
             ) : (
@@ -761,12 +813,12 @@ export const MemberPortal: React.FC = () => {
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between flex-wrap gap-1">
                     <label className="theme-text-muted font-medium flex items-center gap-1.5">
-                      <span>Select Month(s)</span>
+                      <span>{t.selectMonthsLabel}</span>
                     </label>
                     <div className="flex items-center gap-1.5">
                       {periodData && periodData.overdueCount > 0 && (
                         <span className="text-[10px] text-amber-500 font-medium">
-                          {periodData.overdueCount} {periodData.overdueCount === 1 ? 'month' : 'months'} due
+                          {lang === 'bn' ? `${toBengaliNumber(periodData.overdueCount)} মাসের কিস্তি বকেয়া` : `${periodData.overdueCount} month(s) due`}
                         </span>
                       )}
                       {periodData && periodData.options.filter(o => (o.category === 'overdue' || o.isCurrent) && o.canSelect).length > 1 && (
@@ -774,9 +826,9 @@ export const MemberPortal: React.FC = () => {
                           type="button"
                           onClick={handleSelectAllDue}
                           className="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-500/20 text-amber-600 dark:text-amber-400 hover:bg-amber-500/30 transition-colors cursor-pointer"
-                          title="Select all overdue and current months at once"
+                          title={t.selectAllDue}
                         >
-                          Select All Due
+                          {t.selectAllDue}
                         </button>
                       )}
                     </div>
@@ -795,16 +847,16 @@ export const MemberPortal: React.FC = () => {
                   >
                     <option value="" disabled>
                       {selectedMonthKeys.length > 1 
-                        ? `Add / toggle another month (${selectedMonthKeys.length} selected)...`
-                        : 'Select month...'}
+                        ? (lang === 'bn' ? `আরও মাস যুক্ত বা পরিবর্তন করুন (${toBengaliNumber(selectedMonthKeys.length)}টি নির্বাচিত)...` : `Add / toggle another month (${selectedMonthKeys.length} selected)...`)
+                        : (lang === 'bn' ? 'মাস নির্বাচন করুন...' : 'Select month...')}
                     </option>
 
                     {/* Overdue months */}
                     {periodData?.options.filter(o => o.category === 'overdue').length ? (
-                      <optgroup label="⚠️ Overdue Months">
+                      <optgroup label={lang === 'bn' ? '⚠️ বকেয়া কিস্তির মাস' : '⚠️ Overdue Months'}>
                         {periodData.options.filter(o => o.category === 'overdue').map(o => (
                           <option key={o.monthKey} value={o.monthKey}>
-                            {selectedMonthKeys.includes(o.monthKey) ? '✓ ' : ''}{o.monthLabel} (৳{o.amountDue.toLocaleString()} Due)
+                            {selectedMonthKeys.includes(o.monthKey) ? '✓ ' : ''}{translateMonthLabel(o.monthLabel, lang)} ({formatCurrency(o.amountDue, lang)} {lang === 'bn' ? 'বকেয়া' : 'Due'})
                           </option>
                         ))}
                       </optgroup>
@@ -812,23 +864,23 @@ export const MemberPortal: React.FC = () => {
 
                     {/* Current calendar month */}
                     {periodData?.options.filter(o => o.isCurrent).map(o => (
-                      <optgroup key="current-group" label="📅 Current Month">
+                      <optgroup key="current-group" label={lang === 'bn' ? '📅 চলতি ক্যালেন্ডার মাস' : '📅 Current Month'}>
                         <option 
                           key={o.monthKey} 
                           value={o.monthKey} 
                           disabled={!o.canSelect}
                         >
-                          {selectedMonthKeys.includes(o.monthKey) ? '✓ ' : ''}{o.monthLabel} {o.isPaid ? '— Paid ✓' : o.isPendingApproval ? '— Under Review ⏳' : `(৳${o.amountDue.toLocaleString()} Due)`}
+                          {selectedMonthKeys.includes(o.monthKey) ? '✓ ' : ''}{translateMonthLabel(o.monthLabel, lang)} {o.isPaid ? (lang === 'bn' ? '— পরিশোধিত ✓' : '— Paid ✓') : o.isPendingApproval ? (lang === 'bn' ? '— যাচাইাধীন ⏳' : '— Under Review ⏳') : `(${formatCurrency(o.amountDue, lang)} ${lang === 'bn' ? 'বকেয়া' : 'Due'})`}
                         </option>
                       </optgroup>
                     ))}
 
                     {/* Advance / Future months */}
                     {periodData?.options.filter(o => o.isFuture && !o.isPaid && !o.isPendingApproval).length ? (
-                      <optgroup label="⏩ Advance Payment">
+                      <optgroup label={lang === 'bn' ? '⏩ অগ্রিম কিস্তি' : '⏩ Advance Payment'}>
                         {periodData.options.filter(o => o.isFuture && !o.isPaid && !o.isPendingApproval).map(o => (
                           <option key={o.monthKey} value={o.monthKey}>
-                            {selectedMonthKeys.includes(o.monthKey) ? '✓ ' : ''}{o.monthLabel} (৳{o.amountExpected.toLocaleString()})
+                            {selectedMonthKeys.includes(o.monthKey) ? '✓ ' : ''}{translateMonthLabel(o.monthLabel, lang)} ({formatCurrency(o.amountExpected, lang)})
                           </option>
                         ))}
                       </optgroup>
@@ -836,10 +888,10 @@ export const MemberPortal: React.FC = () => {
 
                     {/* Settled / Already paid months */}
                     {periodData?.options.filter(o => o.isPaid && !o.isCurrent).length ? (
-                      <optgroup label="✓ Settled Months">
+                      <optgroup label={lang === 'bn' ? '✓ পরিশোধিত মাসসমূহ' : '✓ Settled Months'}>
                         {periodData.options.filter(o => o.isPaid && !o.isCurrent).map(o => (
                           <option key={o.monthKey} value={o.monthKey} disabled>
-                            {o.monthLabel} — Paid ✓
+                            {translateMonthLabel(o.monthLabel, lang)} {lang === 'bn' ? '— পরিশোধিত ✓' : '— Paid ✓'}
                           </option>
                         ))}
                       </optgroup>
@@ -849,10 +901,12 @@ export const MemberPortal: React.FC = () => {
                   {/* Selected Month Badges with Remove Option */}
                   {selectedMonthKeys.length > 0 && (
                     <div className="flex flex-wrap items-center gap-1 mt-1">
-                      <span className="text-[10px] font-medium theme-text-muted">Selected ({selectedMonthKeys.length}):</span>
+                      <span className="text-[10px] font-medium theme-text-muted">
+                        {lang === 'bn' ? `নির্বাচিত (${toBengaliNumber(selectedMonthKeys.length)}টি):` : `Selected (${selectedMonthKeys.length}):`}
+                      </span>
                       {selectedMonthKeys.map(mk => {
                         const opt = periodData?.options.find(o => o.monthKey === mk);
-                        const label = opt ? opt.monthLabel : mk;
+                        const label = opt ? translateMonthLabel(opt.monthLabel, lang) : mk;
                         return (
                           <span
                             key={mk}
@@ -878,8 +932,10 @@ export const MemberPortal: React.FC = () => {
                   {/* Interactive Multi-Month Checkbox Grid */}
                   <div className="mt-1.5 p-2 rounded-xl border theme-border theme-card-subtle space-y-1">
                     <div className="text-[10px] font-medium theme-text-muted flex items-center justify-between">
-                      <span>Tap to toggle months:</span>
-                      <span className="font-mono text-[10px]">{currentMemberUser.units} {currentMemberUser.units === 1 ? 'unit' : 'units'} (৳{monthlyRate.toLocaleString()}/mo)</span>
+                      <span>{lang === 'bn' ? 'মাস সিলেক্ট / পরিবর্তন করতে ট্যাপ করুন:' : 'Tap to toggle months:'}</span>
+                      <span className="font-mono text-[10px]">
+                        {lang === 'bn' ? toBengaliNumber(currentMemberUser.units) : currentMemberUser.units} {t.unitsLabel} ({formatCurrency(monthlyRate, lang)} {t.perMonth})
+                      </span>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 max-h-32 sm:max-h-36 overflow-y-auto pr-1">
                       {periodData?.options.map(opt => {
@@ -908,18 +964,18 @@ export const MemberPortal: React.FC = () => {
                                 className="rounded text-emerald-600 focus:ring-0 pointer-events-none w-3.5 h-3.5"
                               />
                               <div className="min-w-0">
-                                <div className="font-semibold text-[11px] truncate">{opt.monthLabel}</div>
+                                <div className="font-semibold text-[11px] truncate">{translateMonthLabel(opt.monthLabel, lang)}</div>
                                 <div className="text-[9px]">
-                                  {opt.category === 'overdue' && <span className="text-amber-500 font-medium">Overdue</span>}
-                                  {opt.isCurrent && <span className="text-emerald-500 font-medium">Current</span>}
-                                  {opt.isFuture && !opt.isPaid && <span className="text-sky-400 font-medium">Advance</span>}
-                                  {opt.isPaid && <span className="text-emerald-400 font-medium">Settled ✓</span>}
-                                  {opt.isPendingApproval && <span className="text-amber-400 font-medium">Review ⏳</span>}
+                                  {opt.category === 'overdue' && <span className="text-amber-500 font-medium">{lang === 'bn' ? 'বকেয়া' : 'Overdue'}</span>}
+                                  {opt.isCurrent && <span className="text-emerald-500 font-medium">{lang === 'bn' ? 'চলতি' : 'Current'}</span>}
+                                  {opt.isFuture && !opt.isPaid && <span className="text-sky-400 font-medium">{lang === 'bn' ? 'অগ্রিম' : 'Advance'}</span>}
+                                  {opt.isPaid && <span className="text-emerald-400 font-medium">{lang === 'bn' ? 'পরিশোধিত ✓' : 'Settled ✓'}</span>}
+                                  {opt.isPendingApproval && <span className="text-amber-400 font-medium">{lang === 'bn' ? 'যাচাইাধীন ⏳' : 'Review ⏳'}</span>}
                                 </div>
                               </div>
                             </div>
                             <span className="font-mono font-bold text-[11px] shrink-0 tabular-nums ml-1">
-                              ৳{monthDue.toLocaleString()}
+                              {formatCurrency(monthDue, lang)}
                             </span>
                           </button>
                         );
@@ -947,25 +1003,25 @@ export const MemberPortal: React.FC = () => {
                           : 'bg-slate-500/10 border-slate-500/25 theme-text-muted'
                       }`}>
                         <div className="flex items-center gap-1.5 min-w-0">
-                          <span className="font-bold theme-text-main text-xs">{sel.monthLabel}</span>
+                          <span className="font-bold theme-text-main text-xs">{translateMonthLabel(sel.monthLabel, lang)}</span>
                           {sel.category === 'overdue' && (
                             <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/20 text-amber-500">
-                              Overdue
+                              {lang === 'bn' ? 'বকেয়া' : 'Overdue'}
                             </span>
                           )}
                           {sel.isCurrent && (
                             <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-500">
-                              Current
+                              {lang === 'bn' ? 'চলতি' : 'Current'}
                             </span>
                           )}
                           {sel.isFuture && !sel.isPaid && (
                             <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-sky-500/20 text-sky-400">
-                              Advance
+                              {lang === 'bn' ? 'অগ্রিম' : 'Advance'}
                             </span>
                           )}
                         </div>
                         <span className="font-mono font-bold text-xs theme-text-main tabular-nums ml-2">
-                          ৳{sel.amountExpected.toLocaleString()}
+                          {formatCurrency(sel.amountExpected, lang)}
                         </span>
                       </div>
                     );
@@ -981,14 +1037,14 @@ export const MemberPortal: React.FC = () => {
                     <div className="px-3 py-2 rounded-xl border text-xs flex items-center justify-between bg-emerald-500/10 border-emerald-500/30 text-emerald-900 dark:text-emerald-200">
                       <div className="flex items-center gap-1.5 min-w-0">
                         <span className="font-bold theme-text-main text-xs">
-                          {selectedMonthKeys.length} Months Selected
+                          {lang === 'bn' ? `${toBengaliNumber(selectedMonthKeys.length)}টি মাস নির্বাচিত` : `${selectedMonthKeys.length} Months Selected`}
                         </span>
                         <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-500">
-                          Combined Notice
+                          {lang === 'bn' ? 'সম্মিলিত নোটিশ' : 'Combined Notice'}
                         </span>
                       </div>
                       <span className="font-mono font-bold text-xs theme-text-main tabular-nums ml-2">
-                        Total: ৳{totalExpected.toLocaleString()}
+                        {lang === 'bn' ? 'মোট:' : 'Total:'} {formatCurrency(totalExpected, lang)}
                       </span>
                     </div>
                   );
@@ -998,7 +1054,7 @@ export const MemberPortal: React.FC = () => {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3">
                   <div>
                     <label className="block theme-text-muted mb-1 font-medium">
-                      Actual Payment Date
+                      {t.paymentDateLabel}
                     </label>
                     <input
                       type="date"
@@ -1012,7 +1068,7 @@ export const MemberPortal: React.FC = () => {
 
                   <div>
                     <label className="block theme-text-muted mb-1 font-medium">
-                      Amount Paid (BDT)
+                      {t.amountLabel}
                     </label>
                     <input
                       type="number"
@@ -1030,30 +1086,30 @@ export const MemberPortal: React.FC = () => {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3">
                   <div>
                     <label className="block theme-text-muted mb-1 font-medium">
-                      Payment Method
+                      {t.paymentMethodLabel}
                     </label>
                     <select
                       value={paymentMethod}
                       onChange={e => setPaymentMethod(e.target.value as PaymentMethod)}
                       className="theme-input w-full px-3 py-2 rounded-xl text-xs"
                     >
-                      <option value="Bkash">bKash</option>
-                      <option value="Nagad">Nagad</option>
-                      <option value="CellFin">CellFin</option>
-                      <option value="IBBL">IBBL (Islami Bank)</option>
+                      <option value="Bkash">bKash (বিকাশ)</option>
+                      <option value="Nagad">Nagad (নগদ)</option>
+                      <option value="CellFin">CellFin (সেলফিন)</option>
+                      <option value="IBBL">IBBL (ইসলামী ব্যাংক)</option>
                       <option value="UCB">UCB</option>
-                      <option value="PBL">PBL (Pubali Bank)</option>
+                      <option value="PBL">PBL (পুবালী ব্যাংক)</option>
                       <option value="IIBL">IIBL</option>
                       <option value="CityTouch">CityTouch</option>
-                      <option value="Club AC">Club AC</option>
-                      <option value="Cash">Cash in Hand</option>
-                      <option value="Other">Other</option>
+                      <option value="Club AC">Club AC (ক্লাব ব্যাংক একাউন্ট)</option>
+                      <option value="Cash">Cash in Hand (নগদ)</option>
+                      <option value="Other">Other (অন্যান্য)</option>
                     </select>
                   </div>
 
                   <div>
                     <label className="block theme-text-muted mb-1 font-medium">
-                      Transaction ID / Reference
+                      {t.trxIdLabel}
                     </label>
                     <input
                       type="text"
@@ -1068,13 +1124,13 @@ export const MemberPortal: React.FC = () => {
                 {/* Notes */}
                 <div>
                   <label className="block theme-text-muted mb-1 font-medium">
-                    Notes for Treasurer (Optional)
+                    {t.notesLabel}
                   </label>
                   <textarea
                     rows={1}
                     value={notes}
                     onChange={e => setNotes(e.target.value)}
-                    placeholder="e.g. Sent from personal bKash"
+                    placeholder={lang === 'bn' ? 'যেমন: নিজের বিকাশ থেকে পাঠানো হয়েছে' : 'e.g. Sent from personal bKash'}
                     className="theme-input w-full px-3 py-1.5 rounded-xl text-xs resize-none"
                   />
                 </div>
@@ -1086,7 +1142,7 @@ export const MemberPortal: React.FC = () => {
                     onClick={() => setIsSubmitModalOpen(false)}
                     className="px-3.5 py-1.5 text-xs theme-text-muted hover:theme-text-main cursor-pointer"
                   >
-                    Cancel
+                    {t.cancelBtn}
                   </button>
                   {(() => {
                     const allValid = selectedMonthKeys.length > 0 && selectedMonthKeys.every(mk => {
@@ -1105,7 +1161,9 @@ export const MemberPortal: React.FC = () => {
                             : 'bg-slate-700 text-slate-400 cursor-not-allowed opacity-60'
                         }`}
                       >
-                        Submit Notice ({selectedMonthKeys.length} {selectedMonthKeys.length === 1 ? 'Month' : 'Months'} · ৳{amount.toLocaleString()})
+                        {lang === 'bn' 
+                          ? `নোটিশ জমা দিন (${toBengaliNumber(selectedMonthKeys.length)} মাস · ${formatCurrency(amount, lang)})`
+                          : `Submit Notice (${selectedMonthKeys.length} ${selectedMonthKeys.length === 1 ? 'Month' : 'Months'} · ৳${amount.toLocaleString()})`}
                       </button>
                     );
                   })()}
