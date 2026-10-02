@@ -7,6 +7,7 @@ import {
   getDocs, 
   writeBatch 
 } from '../firebase';
+import { deleteField } from 'firebase/firestore';
 import { 
   Member, 
   MonthlyPayment, 
@@ -205,11 +206,23 @@ export async function cloudDeleteMember(memberId: string) {
 export async function cloudSavePayment(payment: MonthlyPayment) {
   if (isQuotaExceeded) return;
   try {
-    await setDoc(doc(db, 'monthlyPayments', payment.id), sanitizeForFirestore(payment), { merge: true });
+    await setDoc(doc(db, 'monthlyPayments', payment.id), paymentWriteData(payment), { merge: true });
   } catch (e: any) {
     if (e?.code === 'resource-exhausted') isQuotaExceeded = true;
     console.warn('cloudSavePayment notice:', e?.message || e);
   }
+}
+
+// Merge writes otherwise retain old payment metadata after Paid -> Due.
+function paymentWriteData(payment: MonthlyPayment): Record<string, any> {
+  const data = sanitizeForFirestore(payment);
+  if (payment.status === 'Due' && Number(payment.amountPaid) <= 0) {
+    for (const key of ['paymentDate', 'payment_date', 'processedAt', 'processed_at', 'paymentMethod', 'trxId', 'receiptNumber']) {
+      data[key] = deleteField();
+    }
+    if (payment.notes === undefined) data.notes = deleteField();
+  }
+  return data;
 }
 
 export async function cloudBatchSavePayments(payments: MonthlyPayment[]) {
@@ -219,13 +232,29 @@ export async function cloudBatchSavePayments(payments: MonthlyPayment[]) {
       const chunk = payments.slice(i, i + 40);
       const batch = writeBatch(db);
       chunk.forEach(p => {
-        batch.set(doc(db, 'monthlyPayments', p.id), sanitizeForFirestore(p), { merge: true });
+        batch.set(doc(db, 'monthlyPayments', p.id), paymentWriteData(p), { merge: true });
       });
       await batch.commit();
     }
   } catch (e: any) {
     if (e?.code === 'resource-exhausted') isQuotaExceeded = true;
     console.warn('cloudBatchSavePayments notice:', e?.message || e);
+  }
+}
+
+/** Approve a member notice and apply its ledger payments together. */
+export async function cloudApprovePaymentClaim(claim: PendingPaymentClaim, payments: MonthlyPayment[]) {
+  if (isQuotaExceeded) return false;
+  try {
+    const batch = writeBatch(db);
+    payments.forEach(payment => batch.set(doc(db, 'monthlyPayments', payment.id), paymentWriteData(payment), { merge: true }));
+    batch.set(doc(db, 'pendingClaims', claim.id), sanitizeForFirestore(claim), { merge: true });
+    await batch.commit();
+    return true;
+  } catch (e: any) {
+    if (e?.code === 'resource-exhausted') isQuotaExceeded = true;
+    console.warn('cloudApprovePaymentClaim notice:', e?.message || e);
+    return false;
   }
 }
 
@@ -330,22 +359,30 @@ export async function cloudDeleteAdmin(id: string) {
 }
 
 export async function cloudSaveBankProfit(profit: BankProfitRecord) {
-  if (isQuotaExceeded) return;
+  if (isQuotaExceeded) return false;
   try {
-    await setDoc(doc(db, 'bankProfits', profit.id), sanitizeForFirestore(profit), { merge: true });
+    const data = sanitizeForFirestore(profit);
+    for (const key of ['bankName', 'receiptOrVoucher', 'notes']) {
+      if (profit[key as keyof BankProfitRecord] === undefined) data[key] = deleteField();
+    }
+    await setDoc(doc(db, 'bankProfits', profit.id), data, { merge: true });
+    return true;
   } catch (e: any) {
     if (e?.code === 'resource-exhausted') isQuotaExceeded = true;
     console.warn('cloudSaveBankProfit notice:', e?.message || e);
+    return false;
   }
 }
 
 export async function cloudDeleteBankProfit(id: string) {
-  if (isQuotaExceeded) return;
+  if (isQuotaExceeded) return false;
   try {
     await deleteDoc(doc(db, 'bankProfits', id));
+    return true;
   } catch (e: any) {
     if (e?.code === 'resource-exhausted') isQuotaExceeded = true;
     console.warn('cloudDeleteBankProfit notice:', e?.message || e);
+    return false;
   }
 }
 
@@ -354,13 +391,47 @@ export async function cloudSaveConfig(totalClubFunds: number, months: any[], man
   try {
     await setDoc(doc(db, 'clubConfig', 'main'), {
       totalClubFunds,
-      manualFundsAdjustment: manualFundsAdjustment ?? 0,
+      ...(manualFundsAdjustment === undefined ? {} : { manualFundsAdjustment }),
       months,
       updatedAt: new Date().toISOString()
     }, { merge: true });
   } catch (e: any) {
     if (e?.code === 'resource-exhausted') isQuotaExceeded = true;
     console.warn('cloudSaveConfig notice:', e?.message || e);
+  }
+}
+
+/** One commit for the period configuration and its new, previously absent slots. */
+export async function cloudAddMonth(totalClubFunds: number, months: any[], adjustment: number, newPayments: MonthlyPayment[]) {
+  if (isQuotaExceeded) return false;
+  try {
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'clubConfig', 'main'), { totalClubFunds, months, manualFundsAdjustment: adjustment, updatedAt: new Date().toISOString() }, { merge: true });
+    newPayments.forEach(p => batch.set(doc(db, 'monthlyPayments', p.id), paymentWriteData(p), { merge: true }));
+    await batch.commit();
+    return true;
+  } catch (e: any) {
+    if (e?.code === 'resource-exhausted') isQuotaExceeded = true;
+    console.warn('cloudAddMonth notice:', e?.message || e);
+    return false;
+  }
+}
+
+/** Replace a member's fee status without a transient or permanent duplicate fee. */
+export async function cloudReplaceMemberFee(memberId: string, existingIds: string[], record: FeeCollection) {
+  if (isQuotaExceeded) return false;
+  try {
+    const batch = writeBatch(db);
+    new Set([...existingIds, `fee-${memberId}`]).forEach(id => {
+      if (id !== record.id) batch.delete(doc(db, 'feeCollections', id));
+    });
+    batch.set(doc(db, 'feeCollections', record.id), sanitizeForFirestore(record));
+    await batch.commit();
+    return true;
+  } catch (e: any) {
+    if (e?.code === 'resource-exhausted') isQuotaExceeded = true;
+    console.warn('cloudReplaceMemberFee notice:', e?.message || e);
+    return false;
   }
 }
 

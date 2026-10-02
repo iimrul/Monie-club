@@ -1,3 +1,4 @@
+import { DateField } from './DateField';
 import React, { useState, useMemo } from 'react';
 import { useClub } from '../context/ClubContext';
 import { Member, ExpenseRecord, PaymentMethod } from '../types';
@@ -15,7 +16,7 @@ export const ExpensesAndFees: React.FC = () => {
 
   // Tab: Fee Collection vs Operating Expenses
   const [activeTab, setActiveTab] = useState<'fees' | 'expenses'>('fees');
-  
+
   // Filter for Fee Collection: All | Unpaid | Paid
   const [feeStatusFilter, setFeeStatusFilter] = useState<'all' | 'unpaid' | 'paid'>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -156,8 +157,8 @@ export const ExpensesAndFees: React.FC = () => {
   };
 
   return (
-    <div className="space-y-5">
-      
+    <div className="screen-section space-y-5">
+
       {/* Success Notification Banner (Visible across all tabs) */}
       {successMessage && (
         <div className="p-3.5 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-xs text-emerald-600 dark:text-emerald-400 flex items-center justify-between shadow-xs animate-fade-in">
@@ -267,7 +268,7 @@ export const ExpensesAndFees: React.FC = () => {
       {/* ========================================================================= */}
       {activeTab === 'fees' && (
         <div className="space-y-3.5">
-          
+
           {/* Filter Bar & Search */}
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
             <div className="flex items-center gap-1.5 text-xs">
@@ -402,7 +403,7 @@ export const ExpensesAndFees: React.FC = () => {
                               className="px-2.5 py-1 rounded-lg text-xs font-semibold theme-input hover:border-emerald-500/50 hover:bg-emerald-500/10 hover:text-emerald-400 cursor-pointer transition-all inline-flex items-center gap-1.5 shadow-xs"
                               title={`Edit registration fee for ${member.name}`}
                             >
-                              <span>✏️</span>
+
                               <span>Edit</span>
                             </button>
                           </td>
@@ -573,7 +574,7 @@ export const ExpensesAndFees: React.FC = () => {
                   }}
                   className="px-4 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-500 rounded-xl cursor-pointer transition-colors shadow-xs flex items-center gap-1.5"
                 >
-                  <span>🗑️</span>
+
                   <span>Yes, Delete Expense</span>
                 </button>
               </div>
@@ -589,9 +590,6 @@ export const ExpensesAndFees: React.FC = () => {
             {/* Modal Header */}
             <div className="flex items-start justify-between pb-3 border-b theme-border">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-500 text-lg font-bold shrink-0">
-                  ✏️
-                </div>
                 <div>
                   <h3 className="text-sm sm:text-base font-bold theme-text-main">
                     Edit Registration Fee
@@ -711,10 +709,10 @@ export const ExpensesAndFees: React.FC = () => {
                 {/* Payment Date */}
                 <div>
                   <label className="theme-text-muted block mb-1 font-medium">Payment Date</label>
-                  <input
-                    type="date"
+                  <DateField
+                    label="Payment date"
                     value={feeDateInput}
-                    onChange={e => setFeeDateInput(e.target.value)}
+                    onChange={value => setFeeDateInput(value)}
                     className="theme-input w-full px-3 py-2 rounded-lg font-mono text-xs focus:ring-1 focus:ring-emerald-500"
                     required
                   />

@@ -63,7 +63,7 @@ export const MemberActivityLog: React.FC<MemberActivityLogProps> = ({
     );
 
     myPaidPayments.forEach(p => {
-      const dateStr = p.paymentDate || p.payment_date || `${p.monthKey}-10`;
+      const dateStr = p.paymentDate || p.payment_date || '—';
       // Anchor chronologically by the actual ledger month key
       const [year, month] = p.monthKey.split('-').map(Number);
       const time = new Date(year, month - 1, 10).getTime();
@@ -78,8 +78,8 @@ export const MemberActivityLog: React.FC<MemberActivityLogProps> = ({
         amount: p.amountPaid,
         date: dateStr,
         status: 'Paid',
-        paymentMethod: p.paymentMethod || 'Club AC',
-        referenceId: p.receiptNumber || `MC-${p.monthKey}-${member.id}`,
+        paymentMethod: p.paymentMethod,
+        referenceId: p.receiptNumber,
         monthLabel: p.monthLabel,
         notes: p.notes || (lang === 'bn' ? 'অফিসিয়ালি ক্লাবের মূল লেজারে যুক্ত ও ক্রেডিট করা হয়েছে' : 'Officially recorded and credited to Monie Club master ledger'),
         verifiedBy: lang === 'bn' ? 'ক্লাব ট্রেজারার' : 'Club Treasurer',

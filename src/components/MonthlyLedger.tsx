@@ -1,3 +1,4 @@
+import { DateField } from './DateField';
 import React, { useState, useMemo } from 'react';
 import { useClub } from '../context/ClubContext';
 import { MonthlyPayment, MonthKey, PaymentMethod } from '../types';
@@ -6,6 +7,8 @@ import {
   getCurrentMonthKey, 
   getCurrentDateString,
   isFutureMonth,
+  getPaymentDisplayState,
+  formatLedgerPeriod,
   formatMonthKey 
 } from '../services/paymentDueManager';
 import { RecordPaymentModal } from './RecordPaymentModal';
@@ -96,7 +99,7 @@ export const MonthlyLedger: React.FC = () => {
     const collected = payments.filter(p => p.status === 'Paid').reduce((s, p) => s + p.amountPaid, 0);
     const expected = payments.reduce((s, p) => s + p.amountExpected, 0);
     const paidCount = payments.filter(p => p.status === 'Paid').length;
-    const dueCount = payments.filter(p => p.status === 'Due').length;
+    const dueCount = payments.filter(p => getPaymentDisplayState(p) === 'Due').length;
     return { paymentsCount: payments.length, collected, expected, paidCount, dueCount };
   }, [monthToDelete, monthlyPayments]);
 
@@ -145,24 +148,11 @@ export const MonthlyLedger: React.FC = () => {
   // Build 6-Month blocks (Semi-Annual)
   const sixMonthBlocks = useMemo<PeriodBlock[]>(() => {
     const blocks: PeriodBlock[] = [];
-    const customCycles = [
-      { id: 'cycle-1', label: 'Oct 2025 – Mar 2026', sublabel: '6-Mo Session H1', months: ['2025-10', '2025-11', '2025-12', '2026-01', '2026-02', '2026-03'], year: '2026' },
-      { id: 'cycle-2', label: 'Apr 2026 – Sep 2026', sublabel: '6-Mo Venture Period', months: ['2026-04', '2026-05', '2026-06', '2026-07', '2026-08', '2026-09'], year: '2026' },
-      { id: 'cycle-3', label: 'Oct 2026 – Dec 2026', sublabel: '6-Mo Session H3', months: ['2026-10', '2026-11', '2026-12'], year: '2026' },
-    ];
-
-    customCycles.forEach(c => {
-      const existingKeys = c.months.filter(k => months.some(m => m.key === k));
-      if (existingKeys.length > 0) {
-        blocks.push({
-          id: c.id,
-          label: c.label,
-          sublabel: c.sublabel,
-          monthKeys: existingKeys,
-          year: c.year,
-        });
-      }
-    });
+    const sorted = [...months].sort((a, b) => a.key.localeCompare(b.key));
+    for (let i = 0; i < sorted.length; i += 6) {
+      const chunk = sorted.slice(i, i + 6);
+      blocks.push({ id: `cycle-${i / 6 + 1}`, label: formatLedgerPeriod(chunk), sublabel: `${chunk.length}-Mo Period`, monthKeys: chunk.map(m => m.key), year: chunk[chunk.length - 1].key.slice(0, 4) });
+    }
 
     return blocks;
   }, [months]);
@@ -214,7 +204,7 @@ export const MonthlyLedger: React.FC = () => {
     return activePayments.filter(p => p.status === 'Paid').reduce((sum, p) => sum + p.amountPaid, 0);
   }, [activePayments]);
 
-  const totalDue = Math.max(0, totalExpected - totalCollected);
+  const totalDue = activePayments.reduce((sum, p) => getPaymentDisplayState(p) === 'Due' || getPaymentDisplayState(p) === 'Partial' ? sum + Math.max(0, p.amountExpected - p.amountPaid) : sum, 0);
   const collectionRate = totalExpected > 0 ? Math.round((totalCollected / totalExpected) * 100) : 0;
 
   const currentMonthIdx = filteredMonths.findIndex(m => m.key === selectedMonthKey);
@@ -248,7 +238,7 @@ export const MonthlyLedger: React.FC = () => {
 
       if (statusFilter !== 'all') {
         const memberPayments = activePayments.filter(p => p.memberId === member.id);
-        const hasDue = memberPayments.some(p => p.status === 'Due');
+        const hasDue = memberPayments.some(p => getPaymentDisplayState(p) === 'Due' || getPaymentDisplayState(p) === 'Partial');
         if (statusFilter === 'Due' && !hasDue) return false;
         if (statusFilter === 'Paid' && hasDue) return false;
       }
@@ -261,8 +251,8 @@ export const MonthlyLedger: React.FC = () => {
     setEditingPayment(p);
     setEditAmountPaid(p.amountPaid);
     // Take exact paymentDate or payment_date, fallback to month default or today
-    setEditPaymentDate(p.paymentDate || p.payment_date || `${p.monthKey}-10`);
-    setEditPaymentMethod(p.paymentMethod || 'Club AC');
+    setEditPaymentDate(p.amountPaid > 0 ? (p.paymentDate || p.payment_date || getCurrentDateString()) : '');
+    setEditPaymentMethod(p.amountPaid > 0 ? (p.paymentMethod || 'Club AC') : 'Club AC');
     setEditStatus(p.status || (p.amountPaid > 0 ? 'Paid' : 'Due'));
     setEditTrxId(p.trxId || '');
     setEditNotes(p.notes || '');
@@ -280,7 +270,7 @@ export const MonthlyLedger: React.FC = () => {
 
     recordPayment(editingPayment.id, {
       amountPaid: finalAmount,
-      paymentDate: editPaymentDate || getCurrentDateString(),
+      paymentDate: editStatus === 'Due' ? '' : editPaymentDate || getCurrentDateString(),
       paymentMethod: editPaymentMethod,
       status: editStatus,
       memberId: editingPayment.memberId,
@@ -295,7 +285,7 @@ export const MonthlyLedger: React.FC = () => {
     setViewingPayment(null);
   };
 
-  const handleAddMonthSubmit = (e: React.FormEvent) => {
+  const handleAddMonthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const targetKey = `${addYear}-${addMonthNum}`;
     if (months.some(m => m.key === targetKey)) {
@@ -304,12 +294,13 @@ export const MonthlyLedger: React.FC = () => {
       return;
     }
 
-    addMonth(targetKey);
+    const saved = await addMonth(targetKey);
+    if (!saved) { setMonthSuccessMessage(`Could not add ${targetKey} to Firestore. Please retry.`); return; }
     setSelectedMonthKey(targetKey);
     setSelectedYear('all');
     setPeriodType('monthly');
     setIsAddMonthModalOpen(false);
-    setMonthSuccessMessage(`Month ${targetKey} added to the ledger successfully! 18 active member payment slots created.`);
+    setMonthSuccessMessage(`Month ${targetKey} added to the ledger successfully.`);
     setTimeout(() => setMonthSuccessMessage(null), 5000);
   };
 
@@ -357,7 +348,7 @@ export const MonthlyLedger: React.FC = () => {
           </button>
         </div>
       )}
-      
+
       {/* Header and Controls */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-3 border-b theme-border">
         <div>
@@ -406,7 +397,7 @@ export const MonthlyLedger: React.FC = () => {
             className="px-3 py-1.5 rounded-lg text-xs font-semibold theme-input text-rose-500 hover:text-white hover:bg-rose-600 border border-rose-500/30 transition-colors cursor-pointer flex items-center gap-1.5"
             title="Delete a specific month from ledger"
           >
-            <span>🗑️</span>
+
             <span>Delete Month</span>
           </button>
 
@@ -475,7 +466,7 @@ export const MonthlyLedger: React.FC = () => {
       <div className="theme-card p-3 rounded-xl border theme-border space-y-3">
         {/* Row 1: Period Mode Buttons + Year Dropdown + Search & Status Filter */}
         <div className="flex flex-wrap items-center justify-between gap-2.5">
-          <div className="flex items-center gap-1.5 text-xs">
+          <div className="ledger-period-switch flex items-center gap-1.5 text-xs">
             <button
               onClick={() => setPeriodType('monthly')}
               className={`px-3 py-1.5 rounded-lg font-medium cursor-pointer transition-colors ${
@@ -606,7 +597,7 @@ export const MonthlyLedger: React.FC = () => {
                 const isSelected = selectedMonthKey === m.key;
                 const monthPayments = monthlyPayments.filter(p => p.monthKey === m.key);
                 const totalCollected = monthPayments.filter(p => p.status === 'Paid').reduce((s, p) => s + p.amountPaid, 0);
-                const hasDue = monthPayments.some(p => p.status === 'Due');
+                const hasDue = monthPayments.some(p => getPaymentDisplayState(p) === 'Due' || getPaymentDisplayState(p) === 'Partial');
 
                 return (
                   <button
@@ -663,7 +654,7 @@ export const MonthlyLedger: React.FC = () => {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
+            <table className="w-full min-w-[760px] text-left text-xs">
               <thead className="theme-card-subtle theme-text-muted font-mono text-[11px] border-b theme-border">
                 <tr>
                   <th className="py-2.5 px-3 sticky left-0 z-10 theme-card-subtle">Member</th>
@@ -694,21 +685,21 @@ export const MonthlyLedger: React.FC = () => {
                         {member.name}
                       </td>
                       <td className="py-2 px-2 text-center theme-text-muted">{member.units}</td>
-                      
+
                       {months.map(m => {
                         const p = monthlyPayments.find(pay => pay.memberId === member.id && pay.monthKey === m.key);
-                        const isPaid = p?.status === 'Paid';
-                        const isFuture = isFutureMonth(m.key);
+                        const state = p ? getPaymentDisplayState(p) : isFutureMonth(m.key) ? 'Upcoming' : 'Due';
 
                         let badgeText = 'D';
                         let badgeClass = 'bg-amber-500/20 text-amber-400';
                         let statusText = 'Due';
 
-                        if (isPaid) {
-                          badgeText = isFuture ? 'A' : 'P';
-                          badgeClass = isFuture ? 'bg-sky-500/20 text-sky-400' : 'bg-emerald-500/20 text-emerald-400';
-                          statusText = isFuture ? 'Advance Paid' : 'Paid';
-                        }
+                        if (state === 'Paid' || state === 'Advance Paid') {
+                          badgeText = state === 'Advance Paid' ? 'A' : 'P';
+                          badgeClass = state === 'Advance Paid' ? 'bg-sky-500/20 text-sky-400' : 'bg-emerald-500/20 text-emerald-400';
+                        } else if (state === 'Upcoming') { badgeText = 'U'; badgeClass = 'bg-slate-500/15 theme-text-muted'; }
+                        else if (state === 'Partial') { badgeText = 'P'; badgeClass = 'bg-amber-500/20 text-amber-400'; }
+                        statusText = state;
 
                         return (
                           <td 
@@ -749,7 +740,7 @@ export const MonthlyLedger: React.FC = () => {
                 {currentMonthConfig?.label} ({currentMonthConfig?.yearMonth})
               </span>
               <span className="text-[11px] theme-text-muted">
-                · {activePayments.filter(p => p.status === 'Paid').length} Paid / {activePayments.filter(p => p.status === 'Due').length} Due
+                · {activePayments.filter(p => getPaymentDisplayState(p) === 'Paid').length} Paid / {activePayments.filter(p => getPaymentDisplayState(p) === 'Due' || getPaymentDisplayState(p) === 'Partial').length} Due / {activePayments.filter(p => getPaymentDisplayState(p) === 'Upcoming').length} Upcoming
               </span>
             </div>
 
@@ -761,7 +752,7 @@ export const MonthlyLedger: React.FC = () => {
                   className="px-2.5 py-1 rounded-lg text-xs font-medium text-rose-500 hover:text-white hover:bg-rose-600 border border-rose-500/25 cursor-pointer transition-colors shadow-xs flex items-center gap-1.5"
                   title={`Delete ${currentMonthConfig.label} from ledger`}
                 >
-                  <span>🗑️</span>
+
                   <span>Delete Month</span>
                 </button>
               )}
@@ -769,7 +760,7 @@ export const MonthlyLedger: React.FC = () => {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
+            <table className="w-full min-w-[760px] text-left text-xs">
               <thead className="theme-card-subtle theme-text-muted font-mono text-[11px] border-b theme-border">
                 <tr>
                   <th className="py-2.5 px-3">Member Name</th>
@@ -803,7 +794,8 @@ export const MonthlyLedger: React.FC = () => {
                       amountPaid: 0,
                       status: 'Due',
                     };
-                    const isPaid = p.status === 'Paid';
+                    const displayState = getPaymentDisplayState(p);
+                    const isPaid = displayState === 'Paid' || displayState === 'Advance Paid';
 
                     return (
                       <tr 
@@ -827,18 +819,18 @@ export const MonthlyLedger: React.FC = () => {
                             className={`px-2.5 py-0.5 rounded text-[11px] font-semibold ${
                               isPaid
                                 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                                : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                : displayState === 'Upcoming' ? 'bg-slate-500/10 theme-text-muted border theme-border' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
                             }`}
                           >
-                            {isPaid ? 'Paid ✓' : 'Due'}
+                            {displayState}
                           </span>
                         </td>
                         <td className="py-2.5 px-3 font-mono text-[11px] theme-text-main">
-                          {p.paymentDate || p.payment_date || '—'}
+                          {p.amountPaid > 0 ? p.paymentDate || p.payment_date || '—' : '—'}
                         </td>
-                        <td className="py-2.5 px-3 theme-text-muted text-[11px]">{p.paymentMethod || '—'}</td>
+                        <td className="py-2.5 px-3 theme-text-muted text-[11px]">{p.amountPaid > 0 ? p.paymentMethod || '—' : '—'}</td>
                         <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                          <button
+                          {displayState !== 'Upcoming' && <button
                             onClick={(e) => {
                               e.stopPropagation();
                               handleOpenEditPayment(p);
@@ -847,7 +839,7 @@ export const MonthlyLedger: React.FC = () => {
                             title="Edit payment details"
                           >
                             Edit
-                          </button>
+                          </button>}
                         </td>
                       </tr>
                     );
@@ -861,7 +853,7 @@ export const MonthlyLedger: React.FC = () => {
         /* MULTI-MONTH VIEW: 3-MONTH, 6-MONTH, OR YEARLY */
         <div className="theme-card rounded-xl overflow-hidden border theme-border shadow-xs">
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
+            <table className="w-full min-w-[760px] text-left text-xs">
               <thead className="theme-card-subtle theme-text-muted font-mono text-[11px] border-b theme-border">
                 <tr>
                   <th className="py-2.5 px-3">Member Name</th>
@@ -884,7 +876,7 @@ export const MonthlyLedger: React.FC = () => {
                   const memberPayments = activePayments.filter(p => p.memberId === member.id);
                   const expected = memberPayments.reduce((s, p) => s + p.amountExpected, 0);
                   const collected = memberPayments.filter(p => p.status === 'Paid').reduce((s, p) => s + p.amountPaid, 0);
-                  const due = Math.max(0, expected - collected);
+                  const due = memberPayments.reduce((s, p) => getPaymentDisplayState(p) === 'Due' || getPaymentDisplayState(p) === 'Partial' ? s + Math.max(0, p.amountExpected - p.amountPaid) : s, 0);
 
                   return (
                     <tr key={member.id} className="hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
@@ -904,21 +896,22 @@ export const MonthlyLedger: React.FC = () => {
 
                       {activeMonthKeys.map(key => {
                         const p = memberPayments.find(pay => pay.monthKey === key);
-                        const isPaid = p?.status === 'Paid';
+                        const state = p ? getPaymentDisplayState(p) : isFutureMonth(key) ? 'Upcoming' : 'Due';
+                        const isPaid = state === 'Paid' || state === 'Advance Paid';
 
                         return (
                           <td 
                             key={key}
                             onClick={() => p && setViewingPayment(p)}
                             className="py-1 px-1 text-center cursor-pointer hover:opacity-75 transition-opacity"
-                            title={`${member.name} - ${key}: ${isPaid ? 'Paid' : 'Due'}`}
+                            title={`${member.name} - ${key}: ${state}`}
                           >
                             <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${
                               isPaid 
                                 ? 'bg-emerald-500/20 text-emerald-400' 
-                                : 'bg-amber-500/20 text-amber-400'
+                                : state === 'Upcoming' ? 'bg-slate-500/15 theme-text-muted' : 'bg-amber-500/20 text-amber-400'
                             }`}>
-                              {isPaid ? '✓' : '•'}
+                              {isPaid ? '✓' : state === 'Upcoming' ? 'U' : '•'}
                             </span>
                           </td>
                         );
@@ -978,16 +971,16 @@ export const MonthlyLedger: React.FC = () => {
                       ? 'bg-emerald-500/20 text-emerald-400'
                       : 'bg-amber-500/20 text-amber-400'
                   }`}>
-                    {viewingPayment.status === 'Paid' ? 'Paid ✓' : 'Due / Pending'}
+                    {getPaymentDisplayState(viewingPayment)}
                   </span>
                 </div>
-                {(viewingPayment.paymentDate || viewingPayment.payment_date) && (
+                {viewingPayment.amountPaid > 0 && (viewingPayment.paymentDate || viewingPayment.payment_date) && (
                   <div className="flex justify-between items-center">
                     <span className="theme-text-muted font-sans">Payment Date:</span>
                     <span className="theme-text-main font-mono">{viewingPayment.paymentDate || viewingPayment.payment_date}</span>
                   </div>
                 )}
-                {(viewingPayment.processedAt || viewingPayment.processed_at) && (
+                {viewingPayment.amountPaid > 0 && (viewingPayment.processedAt || viewingPayment.processed_at) && (
                   <div className="flex justify-between items-center">
                     <span className="theme-text-muted font-sans">Admin Processed:</span>
                     <span className="theme-text-muted text-[11px] font-mono">
@@ -995,13 +988,13 @@ export const MonthlyLedger: React.FC = () => {
                     </span>
                   </div>
                 )}
-                {viewingPayment.paymentMethod && (
+                {viewingPayment.amountPaid > 0 && viewingPayment.paymentMethod && (
                   <div className="flex justify-between items-center">
                     <span className="theme-text-muted font-sans">Payment Channel:</span>
                     <span className="theme-text-main">{viewingPayment.paymentMethod}</span>
                   </div>
                 )}
-                {viewingPayment.receiptNumber && (
+                {viewingPayment.amountPaid > 0 && viewingPayment.receiptNumber && (
                   <div className="flex justify-between items-center">
                     <span className="theme-text-muted font-sans">Receipt Ref:</span>
                     <span className="theme-text-muted">{viewingPayment.receiptNumber}</span>
@@ -1010,7 +1003,7 @@ export const MonthlyLedger: React.FC = () => {
               </div>
 
               <div className="flex justify-between items-center pt-2">
-                <button
+                {getPaymentDisplayState(viewingPayment) !== 'Upcoming' && <button
                   type="button"
                   onClick={() => {
                     const target = viewingPayment;
@@ -1020,7 +1013,7 @@ export const MonthlyLedger: React.FC = () => {
                   className="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg cursor-pointer transition-colors shadow-xs"
                 >
                   Edit Record
-                </button>
+                </button>}
                 <button
                   type="button"
                   onClick={() => setViewingPayment(null)}
@@ -1074,12 +1067,12 @@ export const MonthlyLedger: React.FC = () => {
                   <span>Payment Date</span>
                   <span className="text-amber-500">*</span>
                 </label>
-                <input
-                  type="date"
+                <DateField
+                  label="Payment date"
                   value={editPaymentDate}
-                  onChange={e => setEditPaymentDate(e.target.value)}
+                  onChange={value => setEditPaymentDate(value)}
                   className="theme-input w-full px-3 py-2 rounded-lg font-mono text-xs focus:ring-1 focus:ring-emerald-500"
-                  required
+                  required={editStatus !== 'Due' && editStatus !== 'Waived'}
                 />
               </div>
 
@@ -1406,7 +1399,7 @@ export const MonthlyLedger: React.FC = () => {
                   disabled={months.length <= 1}
                   className="px-4 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl cursor-pointer transition-colors shadow-xs flex items-center gap-1.5"
                 >
-                  <span>🗑️</span>
+
                   <span>Yes, Delete Month</span>
                 </button>
               </div>

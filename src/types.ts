@@ -125,7 +125,8 @@ export type AppFont = 'inter' | 'outfit' | 'system';
 
 export interface BankProfitRecord {
   id: string;
-  amount: number; // Profit amount from bank in BDT
+  amount: number; // Confirmed additional club income in BDT
+  incomeType?: 'Bank Profit / Interest' | 'Venture Profit' | 'Investment Return' | 'Other Income'; // Legacy records without this field are bank profit
   date: string; // Date profit was credited (YYYY-MM-DD)
   bankName?: string; // e.g. "Club Central Account", "IBBL", "UCB"
   description?: string; // e.g. "Half-yearly bank interest/profit credit"
@@ -147,6 +148,9 @@ export interface ClubSummary {
   totalExpenses: number; // 1,729
   feeBalance: number; // 831
   totalBankProfits: number; // Profit received from bank added to total cash
+  totalMemberContributions: number;
+  totalAdditionalIncome: number;
+  manualFundsAdjustment: number;
 }
 
 export type AdminRole = 'Super Admin' | 'Admin';

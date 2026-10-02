@@ -1,10 +1,17 @@
 import React from 'react';
 import { useClub } from '../context/ClubContext';
+import { formatLedgerPeriod } from '../services/paymentDueManager';
+import { getActiveVentureProfitProjection, getVentureProfitProjection } from '../services/treasuryCalculations';
 
 export const PrintableSummary: React.FC = () => {
-  const { summary, investment, members, expenses, getMemberFinancials } = useClub();
+  const { summary, investment, investments, members, expenses, getMemberFinancials, months } = useClub();
   const activeMembers = members.filter(m => m.status === 'Active');
   const overdueMembers = activeMembers.filter(m => m.monthsPending > 0);
+  const projection = getActiveVentureProfitProjection(investments);
+  const ventureProjection = getVentureProfitProjection(investment);
+  const minProfit = investment.status !== 'Active' && investment.actualProfit !== undefined ? investment.actualProfit : ventureProjection.minProfit;
+  const maxProfit = investment.status !== 'Active' && investment.actualProfit !== undefined ? investment.actualProfit : ventureProjection.maxProfit;
+  const moneyRange = (min: number, max: number) => min === max ? `৳${min.toLocaleString()}` : `৳${min.toLocaleString()} – ৳${max.toLocaleString()}`;
 
   return (
     <div className="hidden print:block p-8 bg-white text-black font-sans max-w-4xl mx-auto">
@@ -14,7 +21,7 @@ export const PrintableSummary: React.FC = () => {
         <p className="text-sm font-medium mt-1">Padua, Lohagara, Chattogram, Bangladesh</p>
         <p className="text-xs text-gray-600 mt-0.5">Official Executive Treasury & Investment Statement</p>
         <div className="mt-2 text-xs font-mono font-bold">
-          Fiscal Session: October 2025 – September 2026 | Generated: {new Date().toLocaleDateString('en-GB')}
+          Ledger: {formatLedgerPeriod(months)} | Generated: {new Date().toLocaleDateString('en-GB')}
         </div>
       </div>
 
@@ -26,28 +33,30 @@ export const PrintableSummary: React.FC = () => {
         <table className="w-full text-sm border-collapse border border-gray-400">
           <tbody>
             <tr className="border-b border-gray-300">
-              <td className="p-2 font-bold bg-gray-100 w-1/2">Total Club Central Funds</td>
+              <td className="p-2 font-bold bg-gray-100 w-1/2">Total Treasury</td>
               <td className="p-2 font-mono font-bold text-base">৳{summary.totalClubFunds.toLocaleString()} BDT</td>
             </tr>
+            <tr className="border-b border-gray-300"><td className="p-2 font-semibold">Additional Profit / Income</td><td className="p-2 font-mono">৳{summary.totalAdditionalIncome.toLocaleString()} BDT</td></tr>
+            {summary.manualFundsAdjustment !== 0 && <tr className="border-b border-gray-300"><td className="p-2 font-semibold">Manual Treasury Adjustment</td><td className="p-2 font-mono">৳{summary.manualFundsAdjustment.toLocaleString()} BDT</td></tr>}
             <tr className="border-b border-gray-300">
               <td className="p-2 font-semibold">Active Capital Deployed in Business Venture (6 Mo)</td>
-              <td className="p-2 font-mono font-semibold">৳{summary.investedFunds.toLocaleString()} BDT (2.00 Lakh)</td>
+              <td className="p-2 font-mono font-semibold">৳{summary.investedFunds.toLocaleString()} BDT</td>
             </tr>
             <tr className="border-b border-gray-300">
               <td className="p-2 font-semibold">Liquid Cash & Bank Reserves</td>
-              <td className="p-2 font-mono font-semibold">৳{summary.liquidReserves.toLocaleString()} BDT (1.81 Lakh)</td>
+              <td className="p-2 font-mono font-semibold">৳{summary.liquidReserves.toLocaleString()} BDT</td>
             </tr>
             <tr className="border-b border-gray-300">
-              <td className="p-2 font-semibold">Projected Net Venture Profit (Concludes October 2026)</td>
-              <td className="p-2 font-mono font-bold text-green-700">+৳{summary.expectedVentureProfit.toLocaleString()} BDT</td>
+              <td className="p-2 font-semibold">Projected Venture Profit (ROI Estimate)</td>
+              <td className="p-2 font-mono font-bold text-green-700">+{moneyRange(projection.minProfit, projection.maxProfit)} BDT</td>
             </tr>
             <tr className="border-b border-gray-300 bg-gray-50">
-              <td className="p-2 font-bold">Total Expected Treasury Value Upon October Settlement</td>
-              <td className="p-2 font-mono font-bold text-base">৳{(summary.totalClubFunds + summary.expectedVentureProfit).toLocaleString()} BDT</td>
+              <td className="p-2 font-bold">Estimated Treasury Upon Venture Settlement</td>
+              <td className="p-2 font-mono font-bold text-base">{moneyRange(summary.totalClubFunds + projection.minProfit, summary.totalClubFunds + projection.maxProfit)} BDT</td>
             </tr>
             <tr className="border-b border-gray-300">
               <td className="p-2 font-semibold text-amber-800">Total Uncollected Member Dues</td>
-              <td className="p-2 font-mono font-bold text-amber-800">৳{summary.totalDues.toLocaleString()} BDT (13 Members)</td>
+              <td className="p-2 font-mono font-bold text-amber-800">৳{summary.totalDues.toLocaleString()} BDT ({overdueMembers.length} Members)</td>
             </tr>
           </tbody>
         </table>
@@ -69,19 +78,19 @@ export const PrintableSummary: React.FC = () => {
           </div>
           <div className="flex justify-between">
             <span className="font-semibold">Duration & Maturity:</span>
-            <span>6 Months (Concludes October 2026)</span>
+            <span>{investment.durationMonths} Months · {investment.maturityDate || 'Maturity not set'}</span>
           </div>
           <div className="flex justify-between">
-            <span className="font-semibold">Earned Net Profit:</span>
-            <span className="font-mono font-bold text-green-700">৳{investment.expectedProfit.toLocaleString()} BDT</span>
+            <span className="font-semibold">{investment.status === 'Active' ? 'Estimated Net Profit:' : 'Venture Net Profit:'}</span>
+            <span className="font-mono font-bold text-green-700">{moneyRange(minProfit, maxProfit)} BDT</span>
           </div>
           <div className="flex justify-between">
             <span className="font-semibold">Total Payout Upon Liquidation:</span>
-            <span className="font-mono font-bold">৳{investment.totalExpectedReturn.toLocaleString()} BDT</span>
+            <span className="font-mono font-bold">{moneyRange(investment.principalAmount + minProfit, investment.principalAmount + maxProfit)} BDT</span>
           </div>
           <div className="flex justify-between">
-            <span className="font-semibold">Dividend per Share Unit (35 Units):</span>
-            <span className="font-mono font-semibold">~৳{(investment.expectedProfit / summary.totalActiveUnits).toFixed(1)} BDT / Unit</span>
+            <span className="font-semibold">Estimated Dividend per Unit ({summary.totalActiveUnits} Units):</span>
+            <span className="font-mono font-semibold">{moneyRange(summary.totalActiveUnits > 0 ? Math.round(minProfit / summary.totalActiveUnits) : 0, summary.totalActiveUnits > 0 ? Math.round(maxProfit / summary.totalActiveUnits) : 0)} BDT / Unit</span>
           </div>
         </div>
       </div>

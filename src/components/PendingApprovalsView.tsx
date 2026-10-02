@@ -31,10 +31,10 @@ export const PendingApprovalsView: React.FC = () => {
   };
 
   return (
-    <div className="space-y-5">
+    <div className="screen-section space-y-5">
       {/* Header & Status Filter Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b theme-border">
-        <div>
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-2 border-b theme-border">
+        <div className="min-w-0">
           <div className="flex items-center gap-2">
             <h1 className="text-xl font-bold tracking-tight theme-text-main">
               Pending Member Payments
@@ -51,7 +51,7 @@ export const PendingApprovalsView: React.FC = () => {
         </div>
 
         {/* Filter Tabs */}
-        <div className="flex items-center gap-1 theme-input p-1 rounded-lg text-xs self-start sm:self-auto">
+        <div className="flex items-center gap-1 theme-input p-1 rounded-lg text-xs self-start lg:self-auto shrink-0">
           {(['Pending', 'Approved', 'Rejected', 'All'] as const).map(tab => (
             <button
               key={tab}
@@ -72,7 +72,7 @@ export const PendingApprovalsView: React.FC = () => {
       {!isSuperAdmin && (
         <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-center justify-between gap-3 text-xs text-amber-700 dark:text-amber-300">
           <div className="flex items-center gap-2">
-            <span>ℹ️</span>
+
             <span>
               <strong>View-Only Admin Mode:</strong> You are signed in as {currentAdminUser?.name || 'Admin'} ({currentAdminUser?.designation || 'Observer'}). Verification and approvals can only be performed by the <strong>Treasurer (Super Admin)</strong>.
             </span>

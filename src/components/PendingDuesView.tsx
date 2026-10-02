@@ -26,7 +26,7 @@ export const PendingDuesView: React.FC = () => {
   };
 
   return (
-    <div className="space-y-5">
+    <div className="screen-section space-y-5">
       
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-2 border-b theme-border">

@@ -1,6 +1,8 @@
+import { DateField } from './DateField';
 import React, { useState, useMemo } from 'react';
 import { useClub } from '../context/ClubContext';
 import { BusinessInvestment } from '../types';
+import { getActiveVentureProfitProjection, getVentureProfitProjection } from '../services/treasuryCalculations';
 
 export const InvestmentTracker: React.FC = () => {
   const { 
@@ -93,21 +95,9 @@ export const InvestmentTracker: React.FC = () => {
     return activeVentures.reduce((sum, i) => sum + i.principalAmount, 0);
   }, [activeVentures]);
 
-  const totalActiveMinProfit = useMemo(() => {
-    return activeVentures.reduce((sum, i) => {
-      if (i.profitMode === 'range' && i.minProfit !== undefined) return sum + i.minProfit;
-      if (i.minRoiPercent !== undefined) return sum + (i.principalAmount * i.minRoiPercent) / 100;
-      return sum + i.expectedProfit;
-    }, 0);
-  }, [activeVentures]);
-
-  const totalActiveMaxProfit = useMemo(() => {
-    return activeVentures.reduce((sum, i) => {
-      if (i.profitMode === 'range' && i.maxProfit !== undefined) return sum + i.maxProfit;
-      if (i.maxRoiPercent !== undefined) return sum + (i.principalAmount * i.maxRoiPercent) / 100;
-      return sum + i.expectedProfit;
-    }, 0);
-  }, [activeVentures]);
+  const activeProjection = useMemo(() => getActiveVentureProfitProjection(activeVentures), [activeVentures]);
+  const totalActiveMinProfit = activeProjection.minProfit;
+  const totalActiveMaxProfit = activeProjection.maxProfit;
 
   const hasActiveProfitRange = totalActiveMinProfit !== totalActiveMaxProfit;
 
@@ -138,17 +128,18 @@ export const InvestmentTracker: React.FC = () => {
 
   const inspectedIsConcluded = inspectedVenture?.status === 'Inactive' && inspectedVenture?.actualProfit !== undefined;
   const inspectedIsRange = !inspectedIsConcluded && inspectedVenture && (inspectedVenture.profitMode === 'range' || (inspectedVenture.minRoiPercent !== undefined && inspectedVenture.maxRoiPercent !== undefined));
+  const inspectedProjection = inspectedVenture ? getVentureProfitProjection(inspectedVenture) : null;
 
   const inspectedMinProfit = inspectedVenture
     ? (inspectedIsConcluded 
         ? inspectedVenture.actualProfit! 
-        : (inspectedVenture.minProfit ?? (inspectedVenture.minRoiPercent ? (inspectedVenture.principalAmount * inspectedVenture.minRoiPercent) / 100 : inspectedVenture.expectedProfit)))
+        : inspectedProjection!.minProfit)
     : 0;
 
   const inspectedMaxProfit = inspectedVenture
     ? (inspectedIsConcluded 
         ? inspectedVenture.actualProfit! 
-        : (inspectedVenture.maxProfit ?? (inspectedVenture.maxRoiPercent ? (inspectedVenture.principalAmount * inspectedVenture.maxRoiPercent) / 100 : inspectedVenture.expectedProfit)))
+        : inspectedProjection!.maxProfit)
     : 0;
 
   const distributableMin = payoutOption === 'reinvest' 
@@ -331,7 +322,7 @@ export const InvestmentTracker: React.FC = () => {
   };
 
   return (
-    <div className="space-y-5">
+    <div className="screen-section space-y-5">
       
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-3 border-b theme-border">
@@ -479,6 +470,7 @@ export const InvestmentTracker: React.FC = () => {
           filteredVentures.map(v => {
             const isActive = v.status === 'Active';
             const isSelected = inspectedVenture?.id === v.id;
+            const projection = getVentureProfitProjection(v);
 
             return (
               <div 
@@ -569,18 +561,18 @@ export const InvestmentTracker: React.FC = () => {
                     </span>
                     <div className="text-base font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">
                       {isActive ? (
-                        (v.profitMode === 'range' || (v.minRoiPercent !== undefined && v.maxRoiPercent !== undefined)) && (v.minProfit !== v.maxProfit) ? (
+                        projection.hasRange ? (
                           <>
-                            +৳{(v.minProfit ?? Math.round((v.principalAmount * (v.minRoiPercent || 0)) / 100)).toLocaleString()} – ৳{(v.maxProfit ?? Math.round((v.principalAmount * (v.maxRoiPercent || 0)) / 100)).toLocaleString()}
+                            +৳{projection.minProfit.toLocaleString()} – ৳{projection.maxProfit.toLocaleString()}
                             <span className="block text-[10px] text-emerald-500/80 font-sans font-normal">
-                              {v.minRoiPercent}% – {v.maxRoiPercent}% ROI
+                              {projection.minRoiPercent}% – {projection.maxRoiPercent}% ROI · Estimated
                             </span>
                           </>
                         ) : (
                           <>
-                            +৳{v.expectedProfit.toLocaleString()}
+                            +৳{projection.maxProfit.toLocaleString()}
                             <span className="block text-[10px] theme-text-muted font-sans font-normal">
-                              {v.principalAmount > 0 ? `${((v.expectedProfit / v.principalAmount) * 100).toFixed(1)}% ROI` : 'Fixed'}
+                              {v.principalAmount > 0 ? `${projection.maxRoiPercent}% ROI · Estimated` : 'Fixed'}
                             </span>
                           </>
                         )
@@ -596,10 +588,10 @@ export const InvestmentTracker: React.FC = () => {
                   <div>
                     <span className="text-[10px] theme-text-muted block font-sans">Total Return</span>
                     <span className="text-base font-bold theme-text-main tabular-nums">
-                      {isActive && (v.profitMode === 'range' || (v.minRoiPercent !== undefined && v.maxRoiPercent !== undefined)) && (v.minProfit !== v.maxProfit) ? (
-                        `৳${(v.principalAmount + (v.minProfit ?? Math.round((v.principalAmount * (v.minRoiPercent || 0)) / 100))).toLocaleString()} – ৳${(v.principalAmount + (v.maxProfit ?? Math.round((v.principalAmount * (v.maxRoiPercent || 0)) / 100))).toLocaleString()}`
+                      {isActive && projection.hasRange ? (
+                        `৳${(v.principalAmount + projection.minProfit).toLocaleString()} – ৳${(v.principalAmount + projection.maxProfit).toLocaleString()}`
                       ) : (
-                        `৳${(v.principalAmount + (isActive ? v.expectedProfit : (v.actualProfit !== undefined ? v.actualProfit : v.expectedProfit))).toLocaleString()}`
+                        `৳${(v.principalAmount + (isActive ? projection.maxProfit : (v.actualProfit !== undefined ? v.actualProfit : v.expectedProfit))).toLocaleString()}`
                       )}
                     </span>
                   </div>
@@ -935,20 +927,20 @@ export const InvestmentTracker: React.FC = () => {
               <div className="grid grid-cols-3 gap-2">
                 <div>
                   <label className="theme-text-muted block mb-1">Start Date</label>
-                  <input
-                    type="date"
+                  <DateField
+                    label="Start date"
                     value={ventureForm.startDate}
-                    onChange={e => setVentureForm(p => ({ ...p, startDate: e.target.value }))}
+                    onChange={value => setVentureForm(p => ({ ...p, startDate: value }))}
                     className="theme-input w-full px-2.5 py-1.5 rounded-lg font-mono text-[11px]"
                   />
                 </div>
 
                 <div>
                   <label className="theme-text-muted block mb-1">Maturity Date</label>
-                  <input
-                    type="date"
+                  <DateField
+                    label="Maturity date"
                     value={ventureForm.maturityDate}
-                    onChange={e => setVentureForm(p => ({ ...p, maturityDate: e.target.value }))}
+                    onChange={value => setVentureForm(p => ({ ...p, maturityDate: value }))}
                     className="theme-input w-full px-2.5 py-1.5 rounded-lg font-mono text-[11px]"
                   />
                 </div>
@@ -1048,10 +1040,10 @@ export const InvestmentTracker: React.FC = () => {
             <form onSubmit={handleConfirmConclude} className="mt-4 space-y-3 text-xs">
               <div>
                 <label className="theme-text-muted block mb-1 font-medium">Conclusion / Settlement Date</label>
-                <input
-                  type="date"
+                <DateField
+                  label="Settlement date"
                   value={concludeData.concludedDate}
-                  onChange={e => setConcludeData(p => ({ ...p, concludedDate: e.target.value }))}
+                  onChange={value => setConcludeData(p => ({ ...p, concludedDate: value }))}
                   className="theme-input w-full px-3 py-1.5 rounded-lg font-mono"
                   required
                 />

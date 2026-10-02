@@ -1,3 +1,4 @@
+import { DateField } from './DateField';
 import React, { useState, useEffect } from 'react';
 import { useClub } from '../context/ClubContext';
 import { MonthKey, PaymentMethod } from '../types';
@@ -87,10 +88,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
   const pendingPaymentsForMember = getMemberDuePayments(selectedMemberId, monthlyPayments);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!existingPayment && !months.some(m => m.key === selectedMonthKey)) {
-      addMonth(selectedMonthKey);
+      if (!await addMonth(selectedMonthKey)) return;
     }
 
     const paymentId = existingPayment?.id || `p-${selectedMemberId}-${selectedMonthKey}`;
@@ -222,7 +223,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                   <label className="theme-text-muted">Target Month</label>
                   <button
                     type="button"
-                    onClick={() => addMonth()}
+                    onClick={() => { void addMonth(); }}
                     className="text-[10px] text-emerald-400 hover:underline cursor-pointer"
                     title="Add future month"
                   >
@@ -237,7 +238,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 >
                   {months.map(m => {
                     const isDue = monthlyPayments.some(
-                      p => p.memberId === selectedMemberId && p.monthKey === m.key && p.status === 'Due'
+                      p => p.memberId === selectedMemberId && p.monthKey === m.key && p.status === 'Due' && m.key <= getCurrentMonthKey()
                     );
                     return (
                       <option key={m.key} value={m.key}>
@@ -250,10 +251,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
               <div>
                 <label className="theme-text-muted block mb-1">Payment Date</label>
-                <input
-                  type="date"
+                <DateField
+                  label="Payment date"
                   value={paymentDate}
-                  onChange={e => setPaymentDate(e.target.value)}
+                  onChange={value => setPaymentDate(value)}
                   className="theme-input w-full px-3 py-2 rounded-lg font-mono text-xs"
                   required
                 />

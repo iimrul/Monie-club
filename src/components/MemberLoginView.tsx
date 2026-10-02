@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { ClubBrand } from './ClubBrand';
 import { useClub } from '../context/ClubContext';
 import { Language } from '../utils/memberTranslations';
 
@@ -40,11 +41,12 @@ export const MemberLoginView: React.FC = () => {
   };
 
   return (
-    <div className="min-h-[85vh] flex flex-col items-center justify-center p-4">
-      <div className="w-full max-w-sm theme-card p-6 sm:p-8 rounded-2xl border theme-border shadow-lg space-y-6 relative">
-        
+    <div lang={lang} className="auth-page min-h-screen flex flex-col items-center justify-center p-4 sm:p-8">
+      <div className="auth-card w-full max-w-sm theme-card p-6 sm:p-7 rounded-2xl border theme-border space-y-5 relative">
+        <div className="auth-brand"><ClubBrand subtitle={lang === 'bn' ? 'সদস্য পোর্টাল' : 'Member Portal'} /><span className="auth-access-badge auth-member-badge">{lang === 'bn' ? 'সদস্য' : 'Member'}</span></div>
+
         {/* Language Switcher in top corner */}
-        <div className="absolute top-4 right-4">
+        <div className="flex justify-end">
           <button
             type="button"
             onClick={toggleLanguage}
@@ -58,19 +60,18 @@ export const MemberLoginView: React.FC = () => {
         </div>
 
         {/* Header / Logo */}
-        <div className="text-center space-y-1">
-          <div className="w-3 h-3 rounded-full bg-emerald-500 mx-auto mb-3"></div>
-          <h1 className="text-xl font-bold tracking-tight theme-text-main">
+        <div className="space-y-2">
+          <h1 className="text-2xl font-semibold tracking-tight theme-text-main">
             {lang === 'bn' ? 'সদস্য পোর্টাল' : 'Member Portal'}
           </h1>
-          <p className="text-xs theme-text-muted">
+          <p className="text-sm theme-text-muted">
             {lang === 'bn' ? 'আপনার নিবন্ধিত মোবাইল নম্বর দিন' : 'Enter your registered mobile number'}
           </p>
         </div>
 
         {/* Error message */}
         {error && (
-          <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-600 dark:text-rose-400">
+          <div role="alert" className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-600 dark:text-rose-400">
             {error}
           </div>
         )}
@@ -78,12 +79,15 @@ export const MemberLoginView: React.FC = () => {
         {/* Form */}
         <form onSubmit={handleLogin} className="space-y-4 text-xs">
           <div>
-            <label className="block theme-text-muted mb-1 font-medium">
+            <label htmlFor="member-mobile" className="block theme-text-main mb-2 font-medium">
               {lang === 'bn' ? 'মোবাইল নম্বর' : 'Mobile Number'}
             </label>
             <div className="relative">
               <input
                 type="tel"
+                id="member-mobile"
+                autoComplete="tel-national"
+                inputMode="tel"
                 value={mobile}
                 onChange={e => setMobile(e.target.value)}
                 placeholder="01XXXXXXXXX"
@@ -96,7 +100,7 @@ export const MemberLoginView: React.FC = () => {
 
           <button
             type="submit"
-            className="w-full py-2.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl transition-colors cursor-pointer shadow-xs"
+            className="primary-action w-full py-3 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl transition-colors cursor-pointer"
           >
             {lang === 'bn' ? 'প্রবেশ করুন' : 'Sign In'}
           </button>

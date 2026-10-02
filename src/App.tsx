@@ -21,6 +21,7 @@ import { RecordPaymentModal } from './components/RecordPaymentModal';
 import { ReportsModal } from './components/ReportsModal';
 import { PrintableSummary } from './components/PrintableSummary';
 import { MonthKey } from './types';
+import { formatLedgerPeriod } from './services/paymentDueManager';
 
 function AppContent() {
   const { 
@@ -30,7 +31,8 @@ function AppContent() {
     setPortalMode, 
     adminSignOutAndGoToMemberPortal,
     currentAdminUser, 
-    currentMemberUser 
+    currentMemberUser,
+    months
   } = useClub();
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
@@ -69,7 +71,7 @@ function AppContent() {
     // If not authenticated as admin, show the secured Admin Credentials Login
     if (!currentAdminUser) {
       return (
-        <div className={`theme-container ${themeClass} ${fontClass} transition-colors duration-200 min-h-screen flex flex-col`}>
+        <div className={`app-shell theme-container ${themeClass} ${fontClass} transition-colors duration-200 min-h-screen flex flex-col`}>
           <AdminLoginView />
         </div>
       );
@@ -77,7 +79,7 @@ function AppContent() {
 
     // Authenticated Admin Dashboard
     return (
-      <div className={`theme-container ${themeClass} ${fontClass} transition-colors duration-200 flex flex-col min-h-screen`}>
+      <div className={`admin-panel app-shell theme-container ${themeClass} ${fontClass} transition-colors duration-200 flex flex-col min-h-screen`}>
         {/* Printable View (Visible only during window.print) */}
         <PrintableSummary />
 
@@ -94,7 +96,7 @@ function AppContent() {
           />
 
           {/* Main Content Area */}
-          <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-5">
+          <main className="flex-1 max-w-[1280px] min-w-0 w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
             {activeTab === 'dashboard' && (
               <DashboardOverview
                 setActiveTab={setActiveTab}
@@ -130,7 +132,7 @@ function AppContent() {
           {/* Minimal Clean Footer */}
           <footer className="border-t theme-border py-3 text-xs theme-text-muted mt-auto">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center text-[11px]">
-              Monie Club Admin · Session 2025–2026
+              Monie Club Admin · Ledger {formatLedgerPeriod(months)}
             </div>
           </footer>
 
@@ -153,7 +155,7 @@ function AppContent() {
 
   // 2. MEMBER PORTAL MODE (Default for monieclub.com.vercel / root web app)
   return (
-    <div className={`theme-container ${themeClass} ${fontClass} transition-colors duration-200 min-h-screen flex flex-col`}>
+    <div className={`app-shell theme-container ${themeClass} ${fontClass} transition-colors duration-200 min-h-screen flex flex-col`}>
       {!currentMemberUser ? (
         <MemberLoginView />
       ) : (

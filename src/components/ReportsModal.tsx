@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useClub } from '../context/ClubContext';
+import { getPaymentDisplayState, getCurrentMonthKey } from '../services/paymentDueManager';
 
 interface ReportsModalProps {
   isOpen: boolean;
@@ -82,7 +83,7 @@ export const ReportsModal: React.FC<ReportsModalProps> = ({ isOpen, onClose }) =
     const rows = activeMems.map(mem => {
       const monthCols = months.map(m => {
         const p = monthlyPayments.find(pay => pay.memberId === mem.id && pay.monthKey === m.key);
-        return p?.status === 'Paid' ? `Paid (${p.amountPaid})` : 'Due';
+        return p ? `${getPaymentDisplayState(p)} (${p.amountPaid})` : m.key > getCurrentMonthKey() ? 'Upcoming (0)' : 'Due (0)';
       });
       return [`"${mem.name}"`, mem.units, ...monthCols, mem.totalDueAmount];
     });

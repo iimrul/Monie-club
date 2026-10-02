@@ -1,6 +1,7 @@
 import { Member, MonthlyPayment, MonthKey, PendingPaymentClaim } from '../types';
 
 export const OFFICIAL_CLUB_NAME = 'Monie Club';
+export const CLUB_TIME_ZONE = 'Asia/Dhaka';
 
 export interface MonthInfo {
   key: MonthKey;
@@ -16,13 +17,13 @@ export function getCurrentDate(): Date {
 }
 
 /**
- * Dynamically computes the current year-month key in 'YYYY-MM' format based on actual calendar date.
+ * Uses the club's calendar in Bangladesh so admin and members share the same due cutoff.
  * E.g. '2026-09' or '2027-01'. Works seamlessly across year boundaries.
  */
 export function getCurrentMonthKey(asOfDate?: Date): MonthKey {
-  const d = asOfDate || new Date();
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: CLUB_TIME_ZONE, year: 'numeric', month: '2-digit' }).formatToParts(asOfDate || new Date());
+  const year = parts.find(part => part.type === 'year')!.value;
+  const month = parts.find(part => part.type === 'month')!.value;
   return `${year}-${month}`;
 }
 
@@ -30,10 +31,10 @@ export function getCurrentMonthKey(asOfDate?: Date): MonthKey {
  * Returns today's actual date string in 'YYYY-MM-DD' format.
  */
 export function getCurrentDateString(asOfDate?: Date): string {
-  const d = asOfDate || new Date();
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: CLUB_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(asOfDate || new Date());
+  const year = parts.find(part => part.type === 'year')!.value;
+  const month = parts.find(part => part.type === 'month')!.value;
+  const day = parts.find(part => part.type === 'day')!.value;
   return `${year}-${month}-${day}`;
 }
 
@@ -127,6 +128,22 @@ export function getMemberStartMonthKey(member: Member, firstConfiguredMonthKey =
 export function isPaymentPaid(payment?: MonthlyPayment): boolean {
   if (!payment) return false;
   return payment.status === 'Paid' || payment.amountPaid >= payment.amountExpected;
+}
+
+/** The ledger state shown in both portals; an unpaid future installment is not a debt. */
+export function getPaymentDisplayState(payment: MonthlyPayment, asOfDate?: Date): 'Paid' | 'Due' | 'Upcoming' | 'Partial' | 'Waived' | 'Advance Paid' {
+  if (isPaymentPaid(payment)) return isFutureMonth(payment.monthKey, asOfDate) ? 'Advance Paid' : 'Paid';
+  if (payment.status === 'Waived') return 'Waived';
+  if (isFutureMonth(payment.monthKey, asOfDate)) return 'Upcoming';
+  return payment.amountPaid > 0 ? 'Partial' : 'Due';
+}
+
+export function formatLedgerPeriod(months: { key: MonthKey }[]): string {
+  if (!months.length) return 'No ledger months';
+  const keys = months.map(m => m.key).sort(compareMonthKeys);
+  const first = formatMonthKey(keys[0]).label;
+  const last = formatMonthKey(keys[keys.length - 1]).label;
+  return first === last ? first : `${first} – ${last}`;
 }
 
 /**
@@ -252,7 +269,7 @@ export function getMemberDuePayments(
 /**
  * Payment period representation for the dynamic "Submit Payment Notice" selector.
  */
-export type PeriodCategory = 'overdue' | 'current_due' | 'current_paid' | 'advance' | 'paid' | 'pending_approval';
+export type PeriodCategory = 'overdue' | 'current_due' | 'current_paid' | 'upcoming' | 'paid' | 'pending_approval';
 
 export interface PaymentPeriodOption {
   monthKey: MonthKey;
@@ -268,6 +285,7 @@ export interface PaymentPeriodOption {
   amountExpected: number;
   amountPaid: number;
   amountDue: number;
+  amountPayable: number; // Remaining installment; includes optional advance payments.
   canSelect: boolean;
   disabledReason?: string;
   pendingClaim?: PendingPaymentClaim;
@@ -323,7 +341,8 @@ export function getMemberPaymentPeriodOptions(
 
     const amountExpected = payment ? payment.amountExpected : member.units * 1000;
     const amountPaid = payment ? payment.amountPaid : 0;
-    const amountDue = isPaid ? 0 : Math.max(0, amountExpected - amountPaid);
+    const amountDue = isPaid || isFuture ? 0 : Math.max(0, amountExpected - amountPaid);
+    const amountPayable = isPaid || payment?.status === 'Waived' ? 0 : Math.max(0, amountExpected - amountPaid);
 
     let category: PeriodCategory;
     let categoryLabel: string;
@@ -354,12 +373,12 @@ export function getMemberPaymentPeriodOptions(
       categoryLabel = `Current Month (৳${amountDue.toLocaleString()} Due)`;
       canSelect = true;
     } else {
-      category = 'advance';
-      categoryLabel = `Advance Payment (৳${amountExpected.toLocaleString()})`;
+      category = 'upcoming';
+      categoryLabel = 'Upcoming (advance payment available)';
       canSelect = true;
     }
 
-    // Set recommended month: first unpaid past month, or current month if unpaid, or first future
+    // Prefer the earliest unpaid month, including advance payment when dues are settled.
     if (!recommendedFound && canSelect) {
       recommendedMonthKey = mKey;
       recommendedFound = true;
@@ -379,6 +398,7 @@ export function getMemberPaymentPeriodOptions(
       amountExpected,
       amountPaid,
       amountDue,
+      amountPayable,
       canSelect,
       disabledReason,
       pendingClaim,

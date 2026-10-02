@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { ClubBrand } from './ClubBrand';
+import { LoaderCircle } from 'lucide-react';
 import { useClub } from '../context/ClubContext';
 
 export const AdminLoginView: React.FC = () => {
@@ -26,25 +28,19 @@ export const AdminLoginView: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-4">
-      <div className="w-full max-w-md theme-card p-6 sm:p-8 rounded-2xl border theme-border shadow-xl space-y-6">
-        
+    <div className="auth-page min-h-screen flex flex-col items-center justify-center p-4 sm:p-8">
+      <div className="auth-card w-full max-w-sm theme-card p-6 sm:p-7 rounded-2xl border theme-border space-y-5">
+
         {/* Brand / Logo */}
-        <div className="text-center space-y-1.5">
-          <div className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 mb-1">
-            <span className="text-xl">🛡️</span>
-          </div>
-          <h1 className="text-xl font-bold tracking-tight theme-text-main">
-            Admin Authentication
-          </h1>
-          <p className="text-xs theme-text-muted">
-            Monie Club Administration Portal
-          </p>
+        <div className="auth-brand"><ClubBrand subtitle="Club treasury & ventures" /><span className="auth-access-badge">Admin</span></div>
+        <div className="space-y-2">
+          <h1 className="text-2xl font-semibold tracking-tight theme-text-main">Admin sign in</h1>
+          <p className="text-sm theme-text-muted">Manage your club’s treasury, members, and ventures.</p>
         </div>
 
         {/* Error message */}
         {error && (
-          <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/25 text-xs text-rose-500 dark:text-rose-400 font-medium">
+          <div role="alert" className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/25 text-xs text-rose-500 dark:text-rose-400 font-medium">
             {error}
           </div>
         )}
@@ -52,11 +48,13 @@ export const AdminLoginView: React.FC = () => {
         {/* Login Form */}
         <form onSubmit={handleLogin} className="space-y-4 text-xs">
           <div>
-            <label className="block theme-text-muted mb-1 font-medium">
+            <label htmlFor="admin-username" className="block theme-text-main mb-2 font-medium">
               Admin Email / Username
             </label>
             <input
               type="text"
+              id="admin-username"
+              autoComplete="username"
               value={email}
               onChange={e => setEmail(e.target.value)}
               className="theme-input w-full px-3.5 py-2.5 rounded-xl font-mono text-xs"
@@ -66,11 +64,13 @@ export const AdminLoginView: React.FC = () => {
           </div>
 
           <div>
-            <label className="block theme-text-muted mb-1 font-medium">
+            <label htmlFor="admin-password" className="block theme-text-main mb-2 font-medium">
               Password
             </label>
             <input
               type="password"
+              id="admin-password"
+              autoComplete="current-password"
               value={password}
               onChange={e => setPassword(e.target.value)}
               placeholder="••••••••••••••"
@@ -82,9 +82,9 @@ export const AdminLoginView: React.FC = () => {
           <button
             type="submit"
             disabled={isLoading}
-            className="w-full py-2.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl transition-colors cursor-pointer shadow-xs disabled:opacity-50"
+            className="primary-action w-full py-3 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
           >
-            {isLoading ? 'Verifying...' : 'Sign In as Administrator'}
+            {isLoading && <LoaderCircle size={17} className="animate-spin" />}{isLoading ? 'Verifying...' : 'Sign In as Administrator'}
           </button>
         </form>
 
@@ -95,8 +95,7 @@ export const AdminLoginView: React.FC = () => {
             onClick={() => setPortalMode('member')}
             className="text-xs text-emerald-600 dark:text-emerald-400 hover:underline cursor-pointer inline-flex items-center gap-1 font-medium"
           >
-            <span>Need Member Passbook & Dues Portal?</span>
-            <span>Switch to Member Portal →</span>
+            <span>Switch to Member Portal</span>
           </button>
         </div>
 

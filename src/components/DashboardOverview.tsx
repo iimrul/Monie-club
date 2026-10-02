@@ -1,6 +1,10 @@
+import { DateField } from './DateField';
 import React, { useState, useMemo } from 'react';
 import { useClub } from '../context/ClubContext';
 import { ActiveTab } from './Header';
+import { BankProfitRecord } from '../types';
+import { formatLedgerPeriod, getCurrentDateString } from '../services/paymentDueManager';
+import { getActiveVentureProfitProjection } from '../services/treasuryCalculations';
 
 interface DashboardOverviewProps {
   setActiveTab: (tab: ActiveTab) => void;
@@ -22,13 +26,19 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     currentAdminUser,
     bankProfits,
     addBankProfit,
-    deleteBankProfit
+    deleteBankProfit,
+    updateBankProfit,
+    months
   } = useClub();
 
   const isSuperAdmin = currentAdminUser?.role === 'Super Admin' && currentAdminUser?.canEdit;
 
   const activeInvestments = useMemo(() => investments.filter(i => i.status === 'Active'), [investments]);
   const primaryActiveVenture = activeInvestments[0] || investment;
+  const ventureProjection = useMemo(() => getActiveVentureProfitProjection(activeInvestments), [activeInvestments]);
+  const projectedProfitLabel = ventureProjection.hasRange
+    ? `৳${ventureProjection.minProfit.toLocaleString()} – ৳${ventureProjection.maxProfit.toLocaleString()}`
+    : `৳${ventureProjection.maxProfit.toLocaleString()}`;
 
   // Inline edit state for Treasury numbers
   const [isEditingTreasury, setIsEditingTreasury] = useState(false);
@@ -39,38 +49,63 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   // Bank profit modal state
   const [isAddBankProfitModalOpen, setIsAddBankProfitModalOpen] = useState(false);
   const [bankProfitAmount, setBankProfitAmount] = useState<number | ''>('');
-  const [bankProfitDate, setBankProfitDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
-  const [bankProfitAccount, setBankProfitAccount] = useState<string>('Club Central Account (IBBL)');
-  const [bankProfitDesc, setBankProfitDesc] = useState<string>('Half-yearly savings account bank profit / interest credit');
+  const [bankProfitDate, setBankProfitDate] = useState<string>(getCurrentDateString);
+  const [bankProfitAccount, setBankProfitAccount] = useState<string>('');
+  const [bankProfitDesc, setBankProfitDesc] = useState<string>('');
   const [bankProfitVoucher, setBankProfitVoucher] = useState<string>('');
+  const [incomeType, setIncomeType] = useState<NonNullable<BankProfitRecord['incomeType']>>('Bank Profit / Interest');
+  const [editingIncomeId, setEditingIncomeId] = useState<string | null>(null);
+  const [entryId, setEntryId] = useState(() => `income-${crypto.randomUUID()}`);
+  const [isSavingIncome, setIsSavingIncome] = useState(false);
   const [bankProfitNotes, setBankProfitNotes] = useState<string>('');
   const [bankProfitSuccessMsg, setBankProfitSuccessMsg] = useState<string | null>(null);
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
 
-  const handleCreateBankProfit = (e: React.FormEvent) => {
+  const handleCreateBankProfit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSavingIncome) return;
     if (!bankProfitAmount || Number(bankProfitAmount) <= 0) {
       setBankProfitSuccessMsg('Please enter a valid profit amount in BDT.');
       setTimeout(() => setBankProfitSuccessMsg(null), 4000);
       return;
     }
 
-    addBankProfit({
+    setIsSavingIncome(true);
+    const data = {
       amount: Number(bankProfitAmount),
-      date: bankProfitDate || new Date().toISOString().split('T')[0],
-      bankName: bankProfitAccount,
+      date: bankProfitDate || getCurrentDateString(),
+      incomeType,
+      bankName: bankProfitAccount || undefined,
       description: bankProfitDesc,
       receiptOrVoucher: bankProfitVoucher || undefined,
       notes: bankProfitNotes || undefined,
       recordedBy: currentAdminUser ? `${currentAdminUser.name} (${currentAdminUser.designation})` : 'Imrul Kaesh Chowdhury (Treasurer)',
-    });
+    };
+    const saved = editingIncomeId ? await updateBankProfit(editingIncomeId, data) : await addBankProfit(data, entryId);
+    setIsSavingIncome(false);
+    if (!saved) { setBankProfitSuccessMsg('Unable to save to Firestore. Please retry.'); return; }
 
-    setBankProfitSuccessMsg(`৳${Number(bankProfitAmount).toLocaleString()} Profit successfully added to the Club's Total Cash Amount!`);
+    setBankProfitSuccessMsg(`৳${Number(bankProfitAmount).toLocaleString()} income ${editingIncomeId ? 'updated' : 'recorded'} in the Club Fund.`);
     setTimeout(() => setBankProfitSuccessMsg(null), 5000);
     setIsAddBankProfitModalOpen(false);
     setBankProfitAmount('');
     setBankProfitVoucher('');
     setBankProfitNotes('');
+    setEditingIncomeId(null);
+    setEntryId(`income-${crypto.randomUUID()}`);
+  };
+
+  const openIncomeEditor = (entry?: BankProfitRecord) => {
+    setEditingIncomeId(entry?.id || null);
+    if (!entry) setEntryId(`income-${crypto.randomUUID()}`);
+    setBankProfitAmount(entry?.amount ?? '');
+    setBankProfitDate(entry?.date || getCurrentDateString());
+    setIncomeType(entry?.incomeType || 'Bank Profit / Interest');
+    setBankProfitAccount(entry?.bankName || '');
+    setBankProfitDesc(entry?.description || '');
+    setBankProfitVoucher(entry?.receiptOrVoucher || '');
+    setBankProfitNotes(entry?.notes || '');
+    setIsAddBankProfitModalOpen(true);
   };
 
   const handleSaveTreasury = (e: React.FormEvent) => {
@@ -96,20 +131,20 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     ? ((summary.liquidReserves / summary.totalClubFunds) * 100).toFixed(1) 
     : '0';
 
-  const perUnitProfit = summary.totalActiveUnits > 0 
-    ? (summary.expectedVentureProfit / summary.totalActiveUnits).toFixed(0) 
-    : '0';
-
-  const ventureRoi = investment.principalAmount > 0
-    ? ((investment.expectedProfit / investment.principalAmount) * 100).toFixed(1)
-    : '0';
+  const perUnitMinProfit = summary.totalActiveUnits > 0 ? Math.round(ventureProjection.minProfit / summary.totalActiveUnits) : 0;
+  const perUnitMaxProfit = summary.totalActiveUnits > 0 ? Math.round(ventureProjection.maxProfit / summary.totalActiveUnits) : 0;
 
   // Active venture milestone progress
   const completedMilestones = investment.milestones?.filter(m => m.completed).length || 0;
   const totalMilestones = investment.milestones?.length || 0;
 
   return (
-    <div className="space-y-6">
+    <div className="admin-overview space-y-6">
+
+      <div className="page-heading flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+        <div><h1 className="text-2xl font-semibold tracking-tight theme-text-main">Club Overview</h1><p className="text-sm theme-text-muted mt-1">Treasury, collections, and active ventures.</p></div>
+        <p className="period-badge text-xs theme-text-muted">{formatLedgerPeriod(months)}</p>
+      </div>
 
       {/* Bank Profit Success Notification */}
       {bankProfitSuccessMsg && (
@@ -191,14 +226,12 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
       )}
 
       {/* Primary Financial Metric Cards */}
-      <div className={`grid grid-cols-1 sm:grid-cols-2 ${
-        activeInvestments.length > 0 ? 'lg:grid-cols-3 xl:grid-cols-5' : 'lg:grid-cols-3 xl:grid-cols-5'
-      } gap-3.5`}>
-        
+      <div className="overview-metrics grid grid-cols-2 xl:grid-cols-4 gap-4">
+
         {/* Card 1: Total Treasury */}
-        <div className="theme-card p-4 rounded-xl flex flex-col justify-between">
+        <div className="treasury-highlight theme-card p-5 rounded-xl flex flex-col justify-between">
           <div className="flex items-center justify-between text-xs">
-            <span className="theme-text-muted font-medium">Total Club Funds</span>
+            <span className="metric-title">Total Treasury</span>
             {isSuperAdmin && (
               <button
                 onClick={() => {
@@ -219,9 +252,61 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             </div>
           </div>
           <div className="text-[11px] theme-text-muted">
-            Oct 25 – Sep 26 Session
+            Includes confirmed profit and income
           </div>
         </div>
+
+        {/* Available cash from the existing treasury summary */}
+        <div className="theme-card p-4 rounded-xl flex flex-col justify-between">
+          <span className="metric-title">Liquid Reserves</span>
+          <strong className="text-2xl font-bold font-mono theme-text-main my-2 tabular-nums">৳{summary.liquidReserves.toLocaleString()}</strong>
+          <span className="text-[11px] theme-text-muted">Available after venture deployment</span>
+        </div>
+
+        {/* Realized additional income is included once in total club funds. */}
+        <div className="theme-card p-4 rounded-xl flex flex-col justify-between border-emerald-500/30">
+            <div className="flex items-center justify-between text-xs">
+              <span className="metric-title">Profit / Other Income</span>
+              {isSuperAdmin && <button
+                onClick={() => openIncomeEditor()}
+                className="text-[11px] font-semibold text-emerald-500 hover:text-emerald-400 cursor-pointer"
+                title="Add profit to increase total cash"
+              >
+                + Add
+              </button>}
+            </div>
+            <div className="my-2">
+              <div className="text-2xl font-bold font-mono text-emerald-400 tracking-tight tabular-nums">
+                ৳{summary.totalAdditionalIncome.toLocaleString()}
+              </div>
+            </div>
+            <div className="text-[11px] text-emerald-500/80">
+              Added to total club cash
+            </div>
+          </div>
+
+        {/* Card: Deployed Venture Capital (Only shown when active investments exist) */}
+        {activeInvestments.length > 0 && (
+          <div
+            onClick={() => setActiveTab('investment')}
+            className="theme-card p-4 rounded-xl flex flex-col justify-between cursor-pointer hover:border-emerald-500/50 transition-all"
+          >
+            <div className="flex items-center justify-between text-xs">
+              <span className="metric-title">Venture Capital</span>
+              <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono">
+                {investedPercent}%
+              </span>
+            </div>
+            <div className="my-2">
+              <div className="text-2xl font-bold font-mono text-emerald-600 dark:text-emerald-400 tracking-tight tabular-nums">
+                ৳{summary.investedFunds.toLocaleString()}
+              </div>
+            </div>
+            <div className="text-[11px] theme-text-muted">
+              {projectedProfitLabel} estimated profit
+            </div>
+          </div>
+        )}
 
         {/* Card 2: Outstanding Dues */}
         <div 
@@ -229,9 +314,9 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
           className="theme-card p-4 rounded-xl flex flex-col justify-between cursor-pointer hover:border-amber-500/50 transition-all"
         >
           <div className="flex items-center justify-between text-xs">
-            <span className="theme-text-muted font-medium">Total Pending Dues</span>
+            <span className="metric-title">Total Pending Dues</span>
             <span className="text-[10px] text-amber-600 dark:text-amber-400 font-mono">
-              {overdueMembers.length} members
+              {members.filter(m => m.status === 'Active' && m.totalDueAmount > 0).length} members
             </span>
           </div>
           <div className="my-2">
@@ -250,7 +335,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
           className="theme-card p-4 rounded-xl flex flex-col justify-between cursor-pointer hover:border-emerald-500/50 transition-all"
         >
           <div className="flex items-center justify-between text-xs">
-            <span className="theme-text-muted font-medium">Active Members</span>
+            <span className="metric-title">Active Members</span>
             <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono">
               {summary.totalActiveUnits} Units
             </span>
@@ -271,7 +356,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
           className="theme-card p-4 rounded-xl flex flex-col justify-between cursor-pointer hover:border-emerald-500/50 transition-all"
         >
           <div className="flex items-center justify-between text-xs">
-            <span className="theme-text-muted font-medium">Registration Fees</span>
+            <span className="metric-title">Registration Fees</span>
             <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono">
               Pool
             </span>
@@ -292,7 +377,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
           className="theme-card p-4 rounded-xl flex flex-col justify-between cursor-pointer hover:border-rose-500/50 transition-all"
         >
           <div className="flex items-center justify-between text-xs">
-            <span className="theme-text-muted font-medium">Operating Costs</span>
+            <span className="metric-title">Operating Costs</span>
             <span className="text-[10px] text-rose-500 font-mono">
               Spent
             </span>
@@ -307,52 +392,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
           </div>
         </div>
 
-        {/* Card: Deployed Venture Capital (Only shown when active investments exist) */}
-        {activeInvestments.length > 0 && (
-          <div 
-            onClick={() => setActiveTab('investment')}
-            className="theme-card p-4 rounded-xl flex flex-col justify-between cursor-pointer hover:border-emerald-500/50 transition-all"
-          >
-            <div className="flex items-center justify-between text-xs">
-              <span className="theme-text-muted font-medium">Venture Capital</span>
-              <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono">
-                {investedPercent}%
-              </span>
-            </div>
-            <div className="my-2">
-              <div className="text-2xl font-bold font-mono text-emerald-600 dark:text-emerald-400 tracking-tight tabular-nums">
-                ৳{summary.investedFunds.toLocaleString()}
-              </div>
-            </div>
-            <div className="text-[11px] theme-text-muted">
-              +৳{summary.expectedVentureProfit.toLocaleString()} return
-            </div>
-          </div>
-        )}
-
-        {/* Card: Realized Profits (Only shown when bank/venture profits exist) */}
-        {summary.totalBankProfits > 0 && (
-          <div className="theme-card p-4 rounded-xl flex flex-col justify-between border-emerald-500/30">
-            <div className="flex items-center justify-between text-xs">
-              <span className="theme-text-muted font-medium">Profits</span>
-              <button
-                onClick={() => setIsAddBankProfitModalOpen(true)}
-                className="text-[11px] font-semibold text-emerald-500 hover:text-emerald-400 cursor-pointer"
-                title="Add profit to increase total cash"
-              >
-                + Add
-              </button>
-            </div>
-            <div className="my-2">
-              <div className="text-2xl font-bold font-mono text-emerald-400 tracking-tight tabular-nums">
-                ৳{summary.totalBankProfits.toLocaleString()}
-              </div>
-            </div>
-            <div className="text-[11px] text-emerald-500/80">
-              Added to total club cash
-            </div>
-          </div>
-        )}
+        {summary.manualFundsAdjustment !== 0 && <div className="theme-card p-4 rounded-xl flex flex-col justify-between"><span className="theme-text-muted font-medium text-xs">Manual Treasury Adjustment</span><strong className="text-xl font-mono theme-text-main my-2">৳{summary.manualFundsAdjustment.toLocaleString()}</strong><span className="text-[11px] theme-text-muted">Included in total club funds</span></div>}
 
       </div>
 
@@ -402,18 +442,17 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         </div>
       )}
 
-      {/* Profits & Inflow Section (Strictly conditional: only shown when profits exist) */}
-      {summary.totalBankProfits > 0 && (
-        <div className="theme-card p-4 rounded-xl text-xs space-y-3 border theme-border">
+      {/* Club income history remains visible when empty so admins can add the first entry. */}
+      <div className="theme-card p-4 rounded-xl text-xs space-y-3 border theme-border">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b theme-border">
             <div>
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
                 <h2 className="text-sm font-bold theme-text-main">
-                  Profits
+                  Club Income / Profit
                 </h2>
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold">
-                  ৳{summary.totalBankProfits.toLocaleString()} Realized
+                  ৳{summary.totalAdditionalIncome.toLocaleString()} Realized
                 </span>
               </div>
               <p className="text-[11px] theme-text-muted mt-0.5">
@@ -421,20 +460,21 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
               </p>
             </div>
 
-            <button
-              onClick={() => setIsAddBankProfitModalOpen(true)}
+            {isSuperAdmin && <button
+              onClick={() => openIncomeEditor()}
               className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer transition-colors shadow-xs flex items-center gap-1.5 shrink-0 self-start sm:self-auto"
             >
               <span>+</span>
-              <span>Record Profit</span>
-            </button>
+              <span>Record Income</span>
+            </button>}
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
+            <table className="w-full min-w-[800px] text-left text-xs">
               <thead className="theme-card-subtle theme-text-muted font-mono text-[11px] border-b theme-border">
                 <tr>
                   <th className="py-2 px-3">Date</th>
+                  <th className="py-2 px-3">Category</th>
                   <th className="py-2 px-3">Source / Account</th>
                   <th className="py-2 px-3">Description</th>
                   <th className="py-2 px-3 text-right">Profit Amount</th>
@@ -443,40 +483,41 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y theme-border">
-                {bankProfits.map(bp => (
+                {[...bankProfits].sort((a, b) => b.date.localeCompare(a.date)).map(bp => (
                   <tr key={bp.id} className="hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
                     <td className="py-2 px-3 font-mono text-xs whitespace-nowrap">{bp.date}</td>
-                    <td className="py-2 px-3 font-medium theme-text-main whitespace-nowrap">{bp.bankName || 'Club Account'}</td>
+                    <td className="py-2 px-3 whitespace-nowrap">{bp.incomeType || 'Bank Profit / Interest'}</td>
+                    <td className="py-2 px-3 font-medium theme-text-main whitespace-nowrap">{bp.bankName || '—'}</td>
                     <td className="py-2 px-3 theme-text-muted truncate max-w-xs">{bp.description || 'Profit credit'}</td>
                     <td className="py-2 px-3 font-mono font-bold text-emerald-400 text-right tabular-nums whitespace-nowrap">
                       +৳{bp.amount.toLocaleString()}
                     </td>
                     <td className="py-2 px-3 theme-text-muted text-[11px] text-right whitespace-nowrap">{bp.recordedBy || 'Treasurer'}</td>
                     <td className="py-2 px-2 text-center whitespace-nowrap">
-                      <button
+                      {isSuperAdmin && <><button type="button" onClick={() => openIncomeEditor(bp)} className="px-2 py-1 text-emerald-600 hover:underline">Edit</button><button
                         type="button"
                         onClick={() => {
-                          deleteBankProfit(bp.id);
-                          setBankProfitSuccessMsg(`৳${bp.amount.toLocaleString()} profit entry removed successfully.`);
-                          setTimeout(() => setBankProfitSuccessMsg(null), 4000);
+                          if (confirmingDeleteId !== bp.id) { setConfirmingDeleteId(bp.id); return; }
+                          void deleteBankProfit(bp.id).then(ok => setBankProfitSuccessMsg(ok ? 'Income entry deleted.' : 'Could not delete income entry. Please retry.'));
+                          setConfirmingDeleteId(null);
                         }}
                         className="px-2.5 py-1 rounded text-xs font-semibold text-rose-500 hover:text-white hover:bg-rose-600 border border-rose-500/25 cursor-pointer transition-colors shadow-xs"
                         title="Delete this profit entry"
                       >
-                        Delete
-                      </button>
+                        {confirmingDeleteId === bp.id ? 'Confirm delete' : 'Delete'}
+                      </button></>}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            {!bankProfits.length && <p className="p-4 theme-text-muted">No income entries yet.</p>}
           </div>
         </div>
-      )}
 
       {/* Two Column / Full Width Layout: Active Venture (Only if active) & Collection Queue */}
       <div className={`grid grid-cols-1 ${activeInvestments.length > 0 ? 'lg:grid-cols-2' : ''} gap-4`}>
-        
+
         {/* Left Column: Business Venture Spotlight (Strictly conditional: hidden if zero active ventures) */}
         {activeInvestments.length > 0 && (
           <div className="theme-card p-5 rounded-xl space-y-4 flex flex-col justify-between">
@@ -531,34 +572,28 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                 </div>
 
                 <div className="theme-card-subtle p-3 rounded-lg">
-                  <span className="theme-text-muted block text-[11px]">Expected Gain</span>
-                  <span className="text-base sm:text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-0.5 block tabular-nums">
-                    {primaryActiveVenture.profitMode === 'range' && primaryActiveVenture.minProfit !== undefined && primaryActiveVenture.maxProfit !== undefined && primaryActiveVenture.minProfit !== primaryActiveVenture.maxProfit
-                      ? `+৳${primaryActiveVenture.minProfit.toLocaleString()} – ৳${primaryActiveVenture.maxProfit.toLocaleString()}`
-                      : `+৳{summary.expectedVentureProfit.toLocaleString()}`}
+                  <span className="theme-text-muted block text-[11px]">Projected Venture Profit</span>
+                  <span className="financial-range text-base sm:text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-0.5 block tabular-nums">
+                    +{projectedProfitLabel}
                   </span>
-                  {primaryActiveVenture.profitMode === 'range' && primaryActiveVenture.minRoiPercent !== undefined && primaryActiveVenture.maxRoiPercent !== undefined && (
-                    <span className="text-[10px] text-emerald-500 font-sans block">
-                      {primaryActiveVenture.minRoiPercent}% – {primaryActiveVenture.maxRoiPercent}% ROI
-                    </span>
-                  )}
+                  <span className="text-[10px] theme-text-muted block">Estimated from configured ROI</span>
                 </div>
 
                 <div className="theme-card-subtle p-3 rounded-lg">
                   <span className="theme-text-muted block text-[11px]">Maturity Return</span>
                   <span className="text-base font-bold font-mono theme-text-main mt-0.5 block tabular-nums">
-                    {primaryActiveVenture.profitMode === 'range' && primaryActiveVenture.minProfit !== undefined && primaryActiveVenture.maxProfit !== undefined && primaryActiveVenture.minProfit !== primaryActiveVenture.maxProfit
-                      ? `৳${(summary.investedFunds + primaryActiveVenture.minProfit).toLocaleString()} – ৳${(summary.investedFunds + primaryActiveVenture.maxProfit).toLocaleString()}`
-                      : `৳${(summary.investedFunds + summary.expectedVentureProfit).toLocaleString()}`}
+                    {ventureProjection.hasRange
+                      ? `৳${(summary.investedFunds + ventureProjection.minProfit).toLocaleString()} – ৳${(summary.investedFunds + ventureProjection.maxProfit).toLocaleString()}`
+                      : `৳${(summary.investedFunds + ventureProjection.maxProfit).toLocaleString()}`}
                   </span>
                 </div>
 
                 <div className="theme-card-subtle p-3 rounded-lg">
                   <span className="theme-text-muted block text-[11px]">Projected per Unit</span>
                   <span className="text-base font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-0.5 block tabular-nums">
-                    {primaryActiveVenture.profitMode === 'range' && primaryActiveVenture.minProfit !== undefined && primaryActiveVenture.maxProfit !== undefined && primaryActiveVenture.minProfit !== primaryActiveVenture.maxProfit
-                      ? `~৳${Math.round(primaryActiveVenture.minProfit / (summary.totalActiveUnits || 35))} – ৳${Math.round(primaryActiveVenture.maxProfit / (summary.totalActiveUnits || 35))} / unit`
-                      : `~৳${perUnitProfit} / unit`}
+                    {ventureProjection.hasRange
+                      ? `৳${perUnitMinProfit.toLocaleString()} – ৳${perUnitMaxProfit.toLocaleString()} / unit`
+                      : `৳${perUnitMaxProfit.toLocaleString()} / unit`}
                   </span>
                 </div>
               </div>
@@ -665,11 +700,11 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
       {/* Record Profit Modal */}
       {isAddBankProfitModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/65 backdrop-blur-xs animate-fade-in">
-          <div className="theme-card rounded-2xl w-full max-w-md p-5 sm:p-6 shadow-2xl relative border theme-border">
+          <div className="theme-card rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto p-5 sm:p-6 shadow-2xl relative border theme-border">
             <div className="flex items-center justify-between pb-3 border-b theme-border">
               <div>
                 <h3 className="text-sm font-bold theme-text-main flex items-center gap-2">
-                  <span>Record Profit</span>
+                  <span>{editingIncomeId ? 'Edit Income' : 'Record Income'}</span>
                   <span className="text-[10px] px-2 py-0.5 rounded-full font-mono bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold">
                     Increases Cash
                   </span>
@@ -689,7 +724,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             <form onSubmit={handleCreateBankProfit} className="mt-4 space-y-3.5 text-xs">
               <div>
                 <label className="theme-text-main font-semibold block mb-1">
-                  Profit Amount (BDT) *
+                  Income Amount (BDT) *
                 </label>
                 <input
                   type="number"
@@ -706,13 +741,14 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                 </span>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div><label className="theme-text-muted block mb-1 font-medium">Income Category *</label><select value={incomeType} onChange={e => setIncomeType(e.target.value as NonNullable<BankProfitRecord['incomeType']>)} className="theme-input w-full px-3 py-2 rounded-lg" required><option>Bank Profit / Interest</option><option>Venture Profit</option><option>Investment Return</option><option>Other Income</option></select></div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="theme-text-muted block mb-1 font-medium">Credited Date *</label>
-                  <input
-                    type="date"
+                  <DateField
+                    label="Credited date"
                     value={bankProfitDate}
-                    onChange={e => setBankProfitDate(e.target.value)}
+                    onChange={value => setBankProfitDate(value)}
                     className="theme-input w-full px-3 py-2 rounded-lg font-mono text-xs focus:ring-1 focus:ring-emerald-500"
                     required
                   />
@@ -720,18 +756,11 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
 
                 <div>
                   <label className="theme-text-muted block mb-1 font-medium">Profit Source</label>
-                  <select
+                  <input type="text" placeholder="Optional source or account"
                     value={bankProfitAccount}
                     onChange={e => setBankProfitAccount(e.target.value)}
                     className="theme-input w-full px-3 py-2 rounded-lg text-xs focus:ring-1 focus:ring-emerald-500"
-                  >
-                    <option value="Club Central Account (IBBL)">Club Central (IBBL)</option>
-                    <option value="Club Reserve Account (UCB)">Club Reserve (UCB)</option>
-                    <option value="Term Deposit / FDR Account">Term Deposit / FDR</option>
-                    <option value="Venture Operational Account">Venture Account</option>
-                    <option value="Islami Bank Bangladesh Ltd">Islami Bank (General)</option>
-                    <option value="Other Profit Source">Other Source</option>
-                  </select>
+                  />
                 </div>
               </div>
 
@@ -768,9 +797,10 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                 </button>
                 <button
                   type="submit"
+                  disabled={isSavingIncome}
                   className="px-4 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg cursor-pointer shadow-xs transition-colors"
                 >
-                  Add Profit
+                  {isSavingIncome ? 'Saving…' : editingIncomeId ? 'Save Changes' : 'Add Income'}
                 </button>
               </div>
             </form>
@@ -781,4 +811,3 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     </div>
   );
 };
-

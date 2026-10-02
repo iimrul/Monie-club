@@ -1,11 +1,17 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import { DateField } from './DateField';
+import { ClubBrand } from './ClubBrand';
+import { Moon, Sun } from 'lucide-react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useClub } from '../context/ClubContext';
 import { PaymentMethod, MonthKey } from '../types';
 import { MemberActivityLog } from './MemberActivityLog';
+import { getActiveVentureProfitProjection, getVentureProfitProjection } from '../services/treasuryCalculations';
 import { 
   getMemberPaymentPeriodOptions, 
   getCurrentDateString, 
   compareMonthKeys,
+  getPaymentDisplayState,
+  formatLedgerPeriod,
   OFFICIAL_CLUB_NAME 
 } from '../services/paymentDueManager';
 import { 
@@ -22,6 +28,8 @@ export const MemberPortal: React.FC = () => {
     memberLogout, 
     monthlyPayments, 
     summary, 
+    bankProfits,
+    currentMonthKey,
     investments,
     investment, 
     expenses, 
@@ -61,17 +69,18 @@ export const MemberPortal: React.FC = () => {
   const periodData = useMemo(() => {
     if (!currentMemberUser) return null;
     return getMemberPaymentPeriodOptions(currentMemberUser, months, monthlyPayments, pendingClaims);
-  }, [currentMemberUser, months, monthlyPayments, pendingClaims]);
+  }, [currentMemberUser, months, monthlyPayments, pendingClaims, currentMonthKey]);
 
   const [isSubmitModalOpen, setIsSubmitModalOpen] = useState(false);
   // Support multiple months payment claim simultaneously
-  const [selectedMonthKeys, setSelectedMonthKeys] = useState<MonthKey[]>(['2026-09']);
-  const selectedMonthKey = selectedMonthKeys[0] || '2026-09';
+  const [selectedMonthKeys, setSelectedMonthKeys] = useState<MonthKey[]>([]);
+  const preferredMonthKey = useRef<MonthKey | null>(null);
   const setSelectedMonthKey = (key: MonthKey) => {
+    preferredMonthKey.current = key;
     setSelectedMonthKeys([key]);
     const opt = periodData?.options.find(o => o.monthKey === key);
     if (opt) {
-      setAmount(opt.amountDue > 0 ? opt.amountDue : (currentMemberUser?.units || 1) * 1000);
+      setAmount(opt.amountPayable);
     }
   };
   const [paymentDate, setPaymentDate] = useState<string>(getCurrentDateString());
@@ -87,12 +96,15 @@ export const MemberPortal: React.FC = () => {
       const overdueKeys = periodData.options
         .filter(o => o.category === 'overdue' && o.canSelect)
         .map(o => o.monthKey);
-      const initialKeys = overdueKeys.length > 0 ? overdueKeys : [periodData.recommendedMonthKey];
+      const preferred = periodData.options.find(o => o.monthKey === preferredMonthKey.current && o.canSelect);
+      const recommended = periodData.options.find(o => o.monthKey === periodData.recommendedMonthKey && o.canSelect);
+      const initialKeys = preferred ? [preferred.monthKey] : overdueKeys.length > 0 ? overdueKeys : recommended ? [recommended.monthKey] : [];
+      preferredMonthKey.current = null;
       setSelectedMonthKeys(initialKeys);
 
       const targetAmount = initialKeys.reduce((sum, mk) => {
         const opt = periodData.options.find(o => o.monthKey === mk);
-        return sum + (opt && opt.amountDue > 0 ? opt.amountDue : (currentMemberUser?.units || 1) * 1000);
+        return sum + (opt?.amountPayable || 0);
       }, 0);
       setAmount(targetAmount);
       setPaymentDate(getCurrentDateString());
@@ -117,7 +129,7 @@ export const MemberPortal: React.FC = () => {
 
       const targetAmount = nextKeys.reduce((sum, mk) => {
         const o = periodData?.options.find(item => item.monthKey === mk);
-        return sum + (o && o.amountDue > 0 ? o.amountDue : (currentMemberUser?.units || 1) * 1000);
+        return sum + (o?.amountPayable || 0);
       }, 0);
       setAmount(targetAmount);
 
@@ -134,7 +146,7 @@ export const MemberPortal: React.FC = () => {
       setSelectedMonthKeys(dueKeys);
       const targetAmount = dueKeys.reduce((sum, mk) => {
         const o = periodData.options.find(item => item.monthKey === mk);
-        return sum + (o && o.amountDue > 0 ? o.amountDue : (currentMemberUser?.units || 1) * 1000);
+        return sum + (o?.amountPayable || 0);
       }, 0);
       setAmount(targetAmount);
     }
@@ -171,7 +183,7 @@ export const MemberPortal: React.FC = () => {
   const monthlyRate = currentMemberUser.units * 1000;
 
   // Unpaid months for this member strictly from active ledger months
-  const dueMonths = myPayments.filter(p => p.status === 'Due');
+  const dueMonths = myPayments.filter(p => ['Due', 'Partial'].includes(getPaymentDisplayState(p)));
 
   // Expenses covered by membership fees
   const operationalExpenses = expenses;
@@ -181,34 +193,16 @@ export const MemberPortal: React.FC = () => {
 
   // Projected return for this member dynamically based on all active ventures set by Admin
   const activeVentures = useMemo(() => investments.filter(inv => inv.status === 'Active'), [investments]);
-  const totalActiveVentureProfit = summary.expectedVentureProfit;
-  const perUnitProfit = summary.totalActiveUnits > 0 
-    ? totalActiveVentureProfit / summary.totalActiveUnits 
-    : 0;
-  const myExpectedShareProfit = perUnitProfit * currentMemberUser.units;
-
-  const totalActiveMinProfit = useMemo(() => {
-    return activeVentures.reduce((sum, v) => {
-      if (v.profitMode === 'range' && v.minProfit !== undefined) return sum + v.minProfit;
-      if (v.minRoiPercent !== undefined) return sum + (v.principalAmount * v.minRoiPercent) / 100;
-      return sum + v.expectedProfit;
-    }, 0);
-  }, [activeVentures]);
-
-  const totalActiveMaxProfit = useMemo(() => {
-    return activeVentures.reduce((sum, v) => {
-      if (v.profitMode === 'range' && v.maxProfit !== undefined) return sum + v.maxProfit;
-      if (v.maxRoiPercent !== undefined) return sum + (v.principalAmount * v.maxRoiPercent) / 100;
-      return sum + v.expectedProfit;
-    }, 0);
-  }, [activeVentures]);
-
-  const perUnitMinProfit = (summary.totalActiveUnits || 35) > 0 ? totalActiveMinProfit / (summary.totalActiveUnits || 35) : 0;
-  const perUnitMaxProfit = (summary.totalActiveUnits || 35) > 0 ? totalActiveMaxProfit / (summary.totalActiveUnits || 35) : 0;
+  const ventureProjection = useMemo(() => getActiveVentureProfitProjection(activeVentures), [activeVentures]);
+  const perUnitMinProfit = summary.totalActiveUnits > 0 ? ventureProjection.minProfit / summary.totalActiveUnits : 0;
+  const perUnitMaxProfit = summary.totalActiveUnits > 0 ? ventureProjection.maxProfit / summary.totalActiveUnits : 0;
 
   const myMinShareProfit = Math.round(perUnitMinProfit * currentMemberUser.units);
   const myMaxShareProfit = Math.round(perUnitMaxProfit * currentMemberUser.units);
   const hasShareRange = myMinShareProfit !== myMaxShareProfit && activeVentures.length > 0;
+  const projectedProfitLabel = ventureProjection.hasRange
+    ? `${formatCurrency(ventureProjection.minProfit, lang)} – ${formatCurrency(ventureProjection.maxProfit, lang)}`
+    : formatCurrency(ventureProjection.maxProfit, lang);
 
   const handleSubmitPaymentNotice = (e: React.FormEvent) => {
     e.preventDefault();
@@ -216,7 +210,7 @@ export const MemberPortal: React.FC = () => {
 
     // Check all selected options can be submitted
     const selectedOptions = selectedMonthKeys.map(mk => periodData?.options.find(o => o.monthKey === mk));
-    if (selectedOptions.some(opt => opt && !opt.canSelect)) {
+    if (selectedOptions.some(opt => !opt || !opt.canSelect)) {
       return;
     }
 
@@ -257,28 +251,22 @@ export const MemberPortal: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col theme-container">
-      
+    <div lang={lang} className="member-portal min-h-screen flex flex-col theme-container">
+
       {/* Member Portal Top Navigation */}
       <header className="sticky top-0 z-40 theme-header backdrop-blur-md border-b theme-border shadow-xs">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="w-2.5 h-2.5 rounded-full bg-emerald-500"></div>
-            <div>
-              <span className="font-bold text-sm theme-text-main">{OFFICIAL_CLUB_NAME}</span>
-              <span className="text-[11px] theme-text-muted ml-2 font-mono">{t.portalBadge}</span>
-            </div>
-          </div>
+        <div className="max-w-[1280px] mx-auto px-4 sm:px-6 lg:px-8 app-topbar">
+          <ClubBrand subtitle={t.portalBadge} />
 
-          <div className="flex items-center gap-2 sm:gap-3">
-            <span className="text-xs theme-text-muted hidden sm:inline">
+          <div className="app-header-controls">
+            <span className="text-xs theme-text-muted hidden lg:inline mr-3">
               <strong className="theme-text-main">{currentMemberUser.name}</strong> ({lang === 'bn' ? toBengaliNumber(currentMemberUser.units) : currentMemberUser.units} {t.unitsLabel})
             </span>
 
             {/* Language Switcher: Bangla First */}
             <button
               onClick={toggleLanguage}
-              className="px-2.5 py-1 rounded-lg theme-input text-xs font-semibold cursor-pointer flex items-center gap-1 hover:border-emerald-500/50 transition-colors shadow-2xs"
+              className="header-control language-control"
               title={lang === 'bn' ? 'Switch to English' : 'বাংলায় পরিবর্তন করুন'}
             >
               <span className={lang === 'bn' ? 'text-emerald-500 font-bold' : 'theme-text-muted'}>বাং</span>
@@ -288,32 +276,33 @@ export const MemberPortal: React.FC = () => {
 
             <button
               onClick={() => setTheme(theme === 'dark' || theme === 'midnight' ? 'light' : 'midnight')}
-              className="px-2.5 py-1 rounded-lg theme-input text-xs cursor-pointer"
+              className="header-control header-icon-control"
               title="Toggle theme"
+              aria-label={theme === 'dark' || theme === 'midnight' ? 'Switch to light theme' : 'Switch to dark theme'}
             >
-              {theme === 'dark' || theme === 'midnight' ? 'Light' : 'Dark'}
+              {theme === 'dark' || theme === 'midnight' ? <Sun size={18} /> : <Moon size={18} />}
             </button>
 
             <button
               onClick={memberLogout}
-              className="px-3 py-1 text-xs font-medium text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer"
+              className="header-control signout-control"
+              aria-label={t.logout}
             >
-              {t.logout}
+              <span>{t.logout}</span>
             </button>
           </div>
         </div>
       </header>
 
       {/* Main Content Area */}
-      <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 py-6 space-y-6">
+      <main className="flex-1 max-w-[1280px] min-w-0 w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-6">
 
         {/* Member Profile Bar */}
-        <div className="theme-card p-5 sm:p-6 rounded-2xl border theme-border flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="member-profile theme-card p-5 sm:p-7 rounded-2xl border theme-border flex flex-col sm:flex-row sm:items-center justify-between gap-5">
           <div className="flex items-center gap-3.5">
-            <div className="w-11 h-11 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold text-base flex items-center justify-center shrink-0">
-              {currentMemberUser.name.split(' ').map(n => n[0]).slice(0, 2).join('')}
-            </div>
+
             <div>
+              <p className="eyebrow mb-1">{lang === 'bn' ? 'আপনার সদস্য অ্যাকাউন্ট' : 'Your membership'}</p>
               <h1 className="text-lg font-bold theme-text-main">
                 {currentMemberUser.name}
               </h1>
@@ -334,18 +323,18 @@ export const MemberPortal: React.FC = () => {
               }
               setIsSubmitModalOpen(true);
             }}
-            className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl transition-colors cursor-pointer shadow-xs flex items-center justify-center gap-1.5 self-start sm:self-auto"
+            className="primary-action px-5 py-3 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl transition-colors cursor-pointer flex items-center justify-center gap-2 self-start sm:self-auto"
           >
-            <span>+</span>
+
             <span>{t.submitDepositNotice}</span>
           </button>
         </div>
 
         {/* 1. Member's Personal Financial Status Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-          
+        <div className="member-metrics grid grid-cols-2 sm:grid-cols-3 gap-4">
+
           <div className="theme-card p-4 rounded-xl border theme-border">
-            <div className="text-xs theme-text-muted font-medium">{t.totalPaid}</div>
+            <div className="metric-label"><span>{t.totalPaid}</span></div>
             <div className="text-2xl sm:text-3xl font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-1 tabular-nums">
               {formatCurrency(totalPaid, lang)}
             </div>
@@ -355,7 +344,7 @@ export const MemberPortal: React.FC = () => {
           </div>
 
           <div className="theme-card p-4 rounded-xl border theme-border">
-            <div className="text-xs theme-text-muted font-medium">{t.totalDue}</div>
+            <div className="metric-label"><span>{t.totalDue}</span></div>
             <div className={`text-2xl sm:text-3xl font-bold font-mono mt-1 tabular-nums ${
               totalDue > 0 ? 'text-amber-600 dark:text-amber-400' : 'theme-text-main'
             }`}>
@@ -369,14 +358,14 @@ export const MemberPortal: React.FC = () => {
           </div>
 
           <div className="theme-card p-4 rounded-xl border theme-border">
-            <div className="text-xs theme-text-muted font-medium">{t.ventureShare}</div>
+            <div className="metric-label"><span>{t.ventureShare}</span></div>
             <div className="text-xl sm:text-2xl font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-1 tabular-nums">
               {activeVentures.length === 0 ? (
                 '+৳0'
               ) : hasShareRange ? (
                 `+${formatCurrency(myMinShareProfit, lang)} – ${formatCurrency(myMaxShareProfit, lang)}`
               ) : (
-                `+${formatCurrency(Math.round(myExpectedShareProfit), lang)}`
+                `+${formatCurrency(myMaxShareProfit, lang)}`
               )}
             </div>
             <div className="text-[11px] theme-text-muted mt-1">
@@ -391,9 +380,10 @@ export const MemberPortal: React.FC = () => {
         </div>
 
         {/* Member Portal Section Navigation Tabs */}
-        <div className="flex flex-wrap items-center gap-2 p-1.5 rounded-2xl theme-card border theme-border text-xs">
+        <div className="portal-tabs flex items-center gap-2 p-1.5 rounded-2xl theme-card border theme-border text-xs overflow-x-auto" role="navigation" aria-label={lang === 'bn' ? 'সদস্য পোর্টাল নেভিগেশন' : 'Member portal navigation'}>
           <button
             onClick={() => setPortalTab('activity')}
+            aria-current={portalTab === 'activity' ? 'page' : undefined}
             className={`px-3.5 py-1.5 rounded-xl font-medium transition-all cursor-pointer ${
               portalTab === 'activity'
                 ? 'bg-emerald-600 text-white font-semibold shadow-xs'
@@ -405,6 +395,7 @@ export const MemberPortal: React.FC = () => {
 
           <button
             onClick={() => setPortalTab('ledger')}
+            aria-current={portalTab === 'ledger' ? 'page' : undefined}
             className={`px-3.5 py-1.5 rounded-xl font-medium transition-all cursor-pointer ${
               portalTab === 'ledger'
                 ? 'bg-emerald-600 text-white font-semibold shadow-xs'
@@ -416,6 +407,7 @@ export const MemberPortal: React.FC = () => {
 
           <button
             onClick={() => setPortalTab('notices')}
+            aria-current={portalTab === 'notices' ? 'page' : undefined}
             className={`px-3.5 py-1.5 rounded-xl font-medium transition-all cursor-pointer flex items-center gap-1.5 ${
               portalTab === 'notices'
                 ? 'bg-emerald-600 text-white font-semibold shadow-xs'
@@ -432,6 +424,7 @@ export const MemberPortal: React.FC = () => {
 
           <button
             onClick={() => setPortalTab('treasury')}
+            aria-current={portalTab === 'treasury' ? 'page' : undefined}
             className={`px-3.5 py-1.5 rounded-xl font-medium transition-all cursor-pointer ${
               portalTab === 'treasury'
                 ? 'bg-emerald-600 text-white font-semibold shadow-xs'
@@ -475,7 +468,7 @@ export const MemberPortal: React.FC = () => {
             </div>
 
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
+              <table className="w-full min-w-[680px] text-left text-xs">
                 <thead>
                   <tr className="border-b theme-border text-xs theme-text-muted">
                     <th className="py-2.5 font-medium">{t.monthCol}</th>
@@ -489,8 +482,9 @@ export const MemberPortal: React.FC = () => {
                 </thead>
                 <tbody className="divide-y theme-border">
                   {myPayments.map(p => {
-                    const isPaid = p.status === 'Paid';
-                    const isDue = p.status === 'Due';
+                    const displayState = getPaymentDisplayState(p);
+                    const isPaid = displayState === 'Paid' || displayState === 'Advance Paid';
+                    const isDue = displayState === 'Due' || displayState === 'Partial';
 
                     return (
                       <tr key={p.id} className="hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
@@ -511,17 +505,17 @@ export const MemberPortal: React.FC = () => {
                               ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400' 
                               : 'bg-slate-500/15 theme-text-muted'
                           }`}>
-                            {isPaid ? t.paidBadge : isDue ? t.dueBadge : p.status}
+                            {displayState === 'Advance Paid' ? (lang === 'bn' ? 'অগ্রিম পরিশোধিত' : 'Advance Paid') : isPaid ? t.paidBadge : isDue ? t.dueBadge : displayState === 'Upcoming' && lang === 'bn' ? 'আসন্ন' : displayState}
                           </span>
                         </td>
                         <td className="py-3 text-xs theme-text-muted font-mono">
-                          {p.paymentDate ? (lang === 'bn' ? toBengaliNumber(p.paymentDate) : p.paymentDate) : '—'}
+                          {p.amountPaid > 0 && (p.paymentDate || p.payment_date) ? (lang === 'bn' ? toBengaliNumber(p.paymentDate || p.payment_date!) : p.paymentDate || p.payment_date) : '—'}
                         </td>
                         <td className="py-3 text-xs theme-text-muted">
-                          {p.paymentMethod || '—'}
+                          {p.amountPaid > 0 ? p.paymentMethod || '—' : '—'}
                         </td>
                         <td className="py-3 text-right">
-                          {isDue && (
+                          {(isDue || displayState === 'Upcoming') && periodData?.options.find(o => o.monthKey === p.monthKey)?.canSelect && (
                             <button
                               onClick={() => {
                                 setSelectedMonthKey(p.monthKey);
@@ -530,7 +524,7 @@ export const MemberPortal: React.FC = () => {
                               }}
                               className="px-2.5 py-1 text-[11px] font-medium text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 rounded-lg transition-colors cursor-pointer"
                             >
-                              {lang === 'bn' ? 'নোটিশ দিন →' : 'Submit Notice →'}
+                              {displayState === 'Upcoming' ? (lang === 'bn' ? 'অগ্রিম পেমেন্ট' : 'Pay in advance') : (lang === 'bn' ? 'নোটিশ দিন' : 'Submit Notice')}
                             </button>
                           )}
                           {isPaid && (
@@ -637,12 +631,20 @@ export const MemberPortal: React.FC = () => {
                 <h2 className="text-sm font-bold theme-text-main">
                   {t.treasuryTitle}
                 </h2>
-                <span className="text-[11px] font-mono text-emerald-600 dark:text-emerald-400 font-semibold self-start sm:self-auto">
-                  {t.totalClubFunds}: {formatCurrency(summary.totalClubFunds, lang)}
-                </span>
+                <span className="text-[11px] theme-text-muted self-start sm:self-auto">{formatLedgerPeriod(months)}</span>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+              <div className="treasury-metrics grid grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
+                <div className="treasury-highlight theme-card-subtle p-5 rounded-xl border theme-border col-span-2">
+                  <span className="theme-text-muted block text-xs font-medium">{t.totalClubFunds}</span>
+                  <strong className="financial-value text-3xl font-mono theme-text-main block mt-2">{formatCurrency(summary.totalClubFunds, lang)}</strong>
+                  <span className="text-[11px] theme-text-muted block mt-2">{lang === 'bn' ? 'নিশ্চিত আয় ও মুনাফাসহ মোট তহবিল' : 'Includes confirmed profit and income'}</span>
+                </div>
+                <div className="theme-card-subtle p-3.5 rounded-xl border theme-border">
+                  <span className="theme-text-muted block text-[11px]">{lang === 'bn' ? 'অতিরিক্ত আয় / মুনাফা' : 'Additional Profit / Income'}</span>
+                  <strong className="text-lg font-mono text-emerald-600 dark:text-emerald-400">{formatCurrency(summary.totalAdditionalIncome, lang)}</strong>
+                </div>
+                {summary.manualFundsAdjustment !== 0 && <div className="theme-card-subtle p-3.5 rounded-xl border theme-border"><span className="theme-text-muted block text-[11px]">{lang === 'bn' ? 'ম্যানুয়াল তহবিল সমন্বয়' : 'Manual Treasury Adjustment'}</span><strong className="text-lg font-mono theme-text-main">{formatCurrency(summary.manualFundsAdjustment, lang)}</strong></div>}
                 <div className="theme-card-subtle p-3.5 rounded-xl border theme-border">
                   <span className="theme-text-muted block text-[11px]">{t.liquidReserves}</span>
                   <span className="text-lg font-bold font-mono theme-text-main mt-0.5 block tabular-nums">
@@ -667,17 +669,23 @@ export const MemberPortal: React.FC = () => {
 
                 <div className="theme-card-subtle p-3.5 rounded-xl border theme-border">
                   <span className="theme-text-muted block text-[11px]">{t.ventureShare}</span>
-                  <span className="text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-0.5 block tabular-nums">
-                    +{formatCurrency(summary.expectedVentureProfit, lang)}
+                  <span className="financial-range text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-0.5 block tabular-nums">
+                    +{projectedProfitLabel}
                   </span>
+                  <span className="text-[11px] theme-text-muted block mt-1">{lang === 'bn' ? 'ROI অনুযায়ী সম্ভাব্য মুনাফা' : 'Estimated profit based on ROI'}</span>
                   <span className="text-[10px] theme-text-muted">
                     {activeVentures.length === 1 && activeVentures[0].maturityDate 
                       ? `${lang === 'bn' ? 'মেয়াদ:' : 'Maturity:'} ${lang === 'bn' ? toBengaliNumber(activeVentures[0].maturityDate) : activeVentures[0].maturityDate}`
                       : activeVentures.length > 1
-                      ? `${t.projectedReturn}: ${formatCurrency(summary.investedFunds + summary.expectedVentureProfit, lang)}`
+                      ? (lang === 'bn' ? 'চলমান ভেঞ্চারগুলোর সম্মিলিত হিসাব' : 'Combined estimate for active ventures')
                       : (lang === 'bn' ? 'বিনিয়োগের অপেক্ষায়' : 'Awaiting deployment')}
                   </span>
                 </div>
+              </div>
+
+              <div className="pt-2 border-t theme-border">
+                <h3 className="text-xs font-semibold theme-text-main mb-2">{lang === 'bn' ? 'অতিরিক্ত আয় ও মুনাফার ইতিহাস' : 'Profit / Income History'}</h3>
+                {bankProfits.length ? <div className="overflow-x-auto"><table className="w-full min-w-[460px] text-xs text-left"><thead className="theme-text-muted"><tr><th className="py-2">{lang === 'bn' ? 'তারিখ' : 'Date'}</th><th>{lang === 'bn' ? 'ধরন' : 'Category'}</th><th>{lang === 'bn' ? 'বিবরণ' : 'Description'}</th><th className="text-right">{lang === 'bn' ? 'পরিমাণ' : 'Amount'}</th></tr></thead><tbody>{[...bankProfits].sort((a, b) => b.date.localeCompare(a.date)).map(entry => <tr key={entry.id} className="border-t theme-border"><td className="py-2 whitespace-nowrap">{entry.date}</td><td>{entry.incomeType || 'Bank Profit / Interest'}</td><td>{entry.description || entry.bankName || '—'}</td><td className="text-right font-mono">{formatCurrency(entry.amount, lang)}</td></tr>)}</tbody></table></div> : <p className="text-xs theme-text-muted">{lang === 'bn' ? 'এখনো কোনো অতিরিক্ত আয় নেই।' : 'No additional income recorded yet.'}</p>}
               </div>
 
               {/* Active Business Ventures List (Live sync with Admin Tracker) */}
@@ -687,7 +695,9 @@ export const MemberPortal: React.FC = () => {
                     {t.activeVenturesTitle} ({lang === 'bn' ? toBengaliNumber(activeVentures.length) : activeVentures.length})
                   </span>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {activeVentures.map(v => (
+                    {activeVentures.map(v => {
+                      const projection = getVentureProfitProjection(v);
+                      return (
                       <div key={v.id} className="p-3 rounded-xl border theme-border theme-card-subtle flex flex-col justify-between text-xs space-y-1.5">
                         <div className="flex items-start justify-between gap-2">
                           <div>
@@ -698,16 +708,18 @@ export const MemberPortal: React.FC = () => {
                             {lang === 'bn' ? 'চলমান' : 'Active'}
                           </span>
                         </div>
-                        <div className="flex items-center justify-between text-[11px] pt-1 border-t theme-border font-mono">
+                        <div className="flex flex-col gap-2 text-[11px] pt-3 border-t theme-border font-mono">
                           <span className="theme-text-muted">{lang === 'bn' ? 'বিনিয়োগ:' : 'Deployed:'} {formatCurrency(v.principalAmount, lang)}</span>
                           <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
-                            {v.profitMode === 'range' && v.minProfit !== undefined && v.maxProfit !== undefined && v.minProfit !== v.maxProfit
-                              ? `+${formatCurrency(v.minProfit, lang)} – ${formatCurrency(v.maxProfit, lang)} (${lang === 'bn' ? toBengaliNumber(v.minRoiPercent ?? 10) : v.minRoiPercent}%–${lang === 'bn' ? toBengaliNumber(v.maxRoiPercent ?? 12.5) : v.maxRoiPercent}%)`
-                              : `+${formatCurrency(v.expectedProfit, lang)}`}
+                            {projection.hasRange
+                              ? `+${formatCurrency(projection.minProfit, lang)} – ${formatCurrency(projection.maxProfit, lang)}`
+                              : `+${formatCurrency(projection.maxProfit, lang)}`}
+                            <span className="block theme-text-muted font-normal mt-1">{lang === 'bn' ? toBengaliNumber(projection.minRoiPercent) : projection.minRoiPercent}%{projection.hasRange ? ` – ${lang === 'bn' ? toBengaliNumber(projection.maxRoiPercent) : projection.maxRoiPercent}%` : ''} ROI · {lang === 'bn' ? 'আনুমানিক' : 'Estimated'}</span>
                           </span>
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               ) : (
@@ -734,7 +746,7 @@ export const MemberPortal: React.FC = () => {
               </div>
 
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
+                <table className="w-full min-w-[460px] text-left text-xs">
                   <thead>
                     <tr className="border-b theme-border text-xs theme-text-muted">
                       <th className="py-2 font-medium">{lang === 'bn' ? 'খরচের বিবরণ' : 'Expense Item'}</th>
@@ -766,7 +778,7 @@ export const MemberPortal: React.FC = () => {
       {/* Member Portal Footer */}
       <footer className="border-t theme-border py-3 text-xs theme-text-muted mt-auto">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 text-center text-[11px]">
-          {OFFICIAL_CLUB_NAME} Member Portal · Session 2025–2026
+          {OFFICIAL_CLUB_NAME} Member Portal · Ledger {formatLedgerPeriod(months)}
         </div>
       </footer>
 
@@ -774,7 +786,7 @@ export const MemberPortal: React.FC = () => {
       {isSubmitModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-2.5 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
           <div className="theme-card w-full max-w-lg max-h-[92vh] flex flex-col rounded-2xl shadow-2xl border theme-border overflow-hidden">
-            
+
             <div className="p-3.5 sm:p-4 border-b theme-border flex items-center justify-between shrink-0">
               <div>
                 <h3 className="font-bold text-sm theme-text-main">
@@ -808,7 +820,7 @@ export const MemberPortal: React.FC = () => {
               </div>
             ) : (
               <form onSubmit={handleSubmitPaymentNotice} className="p-3.5 sm:p-4 space-y-3 text-xs overflow-y-auto flex-1">
-                
+
                 {/* 1. Dynamic Data-Driven Payment Month Selector (Single & Multiple Months) */}
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between flex-wrap gap-1">
@@ -833,7 +845,7 @@ export const MemberPortal: React.FC = () => {
                       )}
                     </div>
                   </div>
-                  
+
                   {/* Dropdown selector */}
                   <select
                     value={selectedMonthKeys.length === 1 ? selectedMonthKeys[0] : ""}
@@ -864,7 +876,7 @@ export const MemberPortal: React.FC = () => {
 
                     {/* Current calendar month */}
                     {periodData?.options.filter(o => o.isCurrent).map(o => (
-                      <optgroup key="current-group" label={lang === 'bn' ? '📅 চলতি ক্যালেন্ডার মাস' : '📅 Current Month'}>
+                      <optgroup key="current-group" label={lang === 'bn' ? 'চলতি ক্যালেন্ডার মাস' : 'Current Month'}>
                         <option 
                           key={o.monthKey} 
                           value={o.monthKey} 
@@ -875,12 +887,12 @@ export const MemberPortal: React.FC = () => {
                       </optgroup>
                     ))}
 
-                    {/* Advance / Future months */}
+                    {/* Future installments can be paid in advance; they remain excluded from dues. */}
                     {periodData?.options.filter(o => o.isFuture && !o.isPaid && !o.isPendingApproval).length ? (
-                      <optgroup label={lang === 'bn' ? '⏩ অগ্রিম কিস্তি' : '⏩ Advance Payment'}>
+                      <optgroup label={lang === 'bn' ? '⏩ আসন্ন মাস' : '⏩ Upcoming Months'}>
                         {periodData.options.filter(o => o.isFuture && !o.isPaid && !o.isPendingApproval).map(o => (
-                          <option key={o.monthKey} value={o.monthKey}>
-                            {selectedMonthKeys.includes(o.monthKey) ? '✓ ' : ''}{translateMonthLabel(o.monthLabel, lang)} ({formatCurrency(o.amountExpected, lang)})
+                          <option key={o.monthKey} value={o.monthKey} disabled={!o.canSelect}>
+                            {translateMonthLabel(o.monthLabel, lang)} — {lang === 'bn' ? 'অগ্রিম পেমেন্ট' : 'Advance payment'} ({formatCurrency(o.amountPayable, lang)})
                           </option>
                         ))}
                       </optgroup>
@@ -940,7 +952,7 @@ export const MemberPortal: React.FC = () => {
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 max-h-32 sm:max-h-36 overflow-y-auto pr-1">
                       {periodData?.options.map(opt => {
                         const isSelected = selectedMonthKeys.includes(opt.monthKey);
-                        const monthDue = opt.amountDue > 0 ? opt.amountDue : monthlyRate;
+                        const monthDue = opt.amountPayable;
                         return (
                           <button
                             key={opt.monthKey}
@@ -968,7 +980,7 @@ export const MemberPortal: React.FC = () => {
                                 <div className="text-[9px]">
                                   {opt.category === 'overdue' && <span className="text-amber-500 font-medium">{lang === 'bn' ? 'বকেয়া' : 'Overdue'}</span>}
                                   {opt.isCurrent && <span className="text-emerald-500 font-medium">{lang === 'bn' ? 'চলতি' : 'Current'}</span>}
-                                  {opt.isFuture && !opt.isPaid && <span className="text-sky-400 font-medium">{lang === 'bn' ? 'অগ্রিম' : 'Advance'}</span>}
+                                  {opt.isFuture && !opt.isPaid && <span className="text-sky-400 font-medium">{lang === 'bn' ? 'আসন্ন · অগ্রিম পেমেন্ট' : 'Upcoming · pay in advance'}</span>}
                                   {opt.isPaid && <span className="text-emerald-400 font-medium">{lang === 'bn' ? 'পরিশোধিত ✓' : 'Settled ✓'}</span>}
                                   {opt.isPendingApproval && <span className="text-amber-400 font-medium">{lang === 'bn' ? 'যাচাইাধীন ⏳' : 'Review ⏳'}</span>}
                                 </div>
@@ -982,6 +994,7 @@ export const MemberPortal: React.FC = () => {
                       })}
                     </div>
                   </div>
+                  <p className="text-[11px] theme-text-muted pt-1">{lang === 'bn' ? 'লেজারে থাকা আসন্ন মাসের কিস্তি অগ্রিম দিতে পারবেন। মাস শুরু হওয়ার আগে তা বকেয়ায় যোগ হবে না।' : 'You can pay upcoming ledger months in advance. They do not count as dues before the month begins.'}</p>
                 </div>
 
                 {/* Selected Month Status & Breakdown Badge */}
@@ -1021,7 +1034,7 @@ export const MemberPortal: React.FC = () => {
                           )}
                         </div>
                         <span className="font-mono font-bold text-xs theme-text-main tabular-nums ml-2">
-                          {formatCurrency(sel.amountExpected, lang)}
+                          {formatCurrency(sel.amountPayable, lang)}
                         </span>
                       </div>
                     );
@@ -1030,7 +1043,7 @@ export const MemberPortal: React.FC = () => {
                   // Multiple months selected breakdown
                   const totalExpected = selectedMonthKeys.reduce((sum, mk) => {
                     const opt = periodData?.options.find(o => o.monthKey === mk);
-                    return sum + (opt && opt.amountDue > 0 ? opt.amountDue : monthlyRate);
+                    return sum + (opt?.amountPayable || 0);
                   }, 0);
 
                   return (
@@ -1056,10 +1069,10 @@ export const MemberPortal: React.FC = () => {
                     <label className="block theme-text-muted mb-1 font-medium">
                       {t.paymentDateLabel}
                     </label>
-                    <input
-                      type="date"
+                    <DateField
+                      label={t.paymentDateLabel} lang={lang}
                       value={paymentDate}
-                      onChange={e => setPaymentDate(e.target.value)}
+                      onChange={value => setPaymentDate(value)}
                       max={getCurrentDateString()}
                       className="theme-input w-full px-3 py-2 rounded-xl text-xs font-mono"
                       required

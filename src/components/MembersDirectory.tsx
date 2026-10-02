@@ -1,3 +1,4 @@
+import { DateField } from './DateField';
 import React, { useState, useMemo } from 'react';
 import { useClub } from '../context/ClubContext';
 import { Member, BloodGroup } from '../types';
@@ -180,7 +181,7 @@ export const MembersDirectory: React.FC = () => {
   };
 
   return (
-    <div className="space-y-5">
+    <div className="screen-section space-y-5">
       
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-3 border-b theme-border">
@@ -842,19 +843,19 @@ export const MembersDirectory: React.FC = () => {
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <label className="theme-text-muted block mb-1">Join Date</label>
-                      <input
-                        type="date"
+                      <DateField
+                        label="Join date"
                         value={formData.registrationDate}
-                        onChange={e => setFormData(p => ({ ...p, registrationDate: e.target.value }))}
+                        onChange={value => setFormData(p => ({ ...p, registrationDate: value }))}
                         className="theme-input w-full px-2.5 py-1 rounded-lg font-mono text-xs"
                       />
                     </div>
                     <div>
                       <label className="theme-text-muted block mb-1">Left Date</label>
-                      <input
-                        type="date"
+                      <DateField
+                        label="Left date"
                         value={formData.inactiveDate}
-                        onChange={e => setFormData(p => ({ ...p, inactiveDate: e.target.value }))}
+                        onChange={value => setFormData(p => ({ ...p, inactiveDate: value }))}
                         className="theme-input w-full px-2.5 py-1 rounded-lg font-mono text-xs"
                       />
                     </div>

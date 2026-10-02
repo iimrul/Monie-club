@@ -36,12 +36,14 @@ import {
   OFFICIAL_CLUB_NAME
 } from '../services/paymentDueManager';
 import { db, collection, doc, onSnapshot, deleteDoc } from '../firebase';
+import { calculateTreasuryTotals } from '../services/treasuryCalculations';
 import { 
   seedFirestoreIfEmpty,
   cloudSaveMember,
   cloudDeleteMember,
   cloudSavePayment,
   cloudBatchSavePayments,
+  cloudApprovePaymentClaim,
   cloudSaveInvestment,
   cloudDeleteInvestment,
   cloudSaveExpense,
@@ -55,6 +57,8 @@ import {
   cloudSaveBankProfit,
   cloudDeleteBankProfit,
   cloudSaveConfig,
+  cloudAddMonth,
+  cloudReplaceMemberFee,
   cloudDeletePaymentsForMonth
 } from '../services/firestoreSync';
 
@@ -102,11 +106,12 @@ interface ClubContextType {
   feeCollections: FeeCollection[];
   summary: ClubSummary;
   bankProfits: BankProfitRecord[];
-  addBankProfit: (profit: Omit<BankProfitRecord, 'id' | 'createdAt'>) => void;
-  updateBankProfit: (id: string, updates: Partial<BankProfitRecord>) => void;
-  deleteBankProfit: (id: string) => void;
+  addBankProfit: (profit: Omit<BankProfitRecord, 'id' | 'createdAt'>, entryId?: string) => Promise<boolean>;
+  updateBankProfit: (id: string, updates: Partial<BankProfitRecord>) => Promise<boolean>;
+  deleteBankProfit: (id: string) => Promise<boolean>;
   months: MonthInfo[];
-  addMonth: (targetKey?: string) => void;
+  currentMonthKey: MonthKey;
+  addMonth: (targetKey?: string) => Promise<boolean>;
   deleteMonth: (monthKey: MonthKey) => void;
   setTotalClubFunds: (val: number) => void;
   recordPayment: (paymentId: string, details: { amountPaid: number; paymentDate: string; paymentMethod: any; notes?: string; status: 'Paid' | 'Due' | 'Partial' | 'Waived'; memberId?: string; memberName?: string; monthKey?: MonthKey }) => void;
@@ -179,10 +184,22 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   });
 
+  const [currentMonthKey, setCurrentMonthKey] = useState(getCurrentMonthKey);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const refresh = () => {
+      setCurrentMonthKey(getCurrentMonthKey());
+      const nextBangladeshMidnight = Date.parse(`${getCurrentDateString()}T00:00:00+06:00`) + 86_400_100;
+      timer = setTimeout(refresh, Math.max(100, nextBangladeshMidnight - Date.now()));
+    };
+    refresh();
+    document.addEventListener('visibilitychange', refresh);
+    return () => { clearTimeout(timer); document.removeEventListener('visibilitychange', refresh); };
+  }, []);
+
   const [manualFundsAdjustment, setManualFundsAdjustment] = useState<number>(() => {
     try {
-      localStorage.removeItem(`${STORAGE_KEY_PREFIX}_fundsAdjustment`);
-      return 0;
+      return Number(localStorage.getItem(`${STORAGE_KEY_PREFIX}_fundsAdjustment`)) || 0;
     } catch {
       return 0;
     }
@@ -345,7 +362,7 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setPortalModeState('member');
   };
 
-  // Bank Profits (manually inputable interest/profits from bank that increase club cash)
+  // Additional income uses the existing bankProfits collection for legacy compatibility.
   const [bankProfits, setBankProfits] = useState<BankProfitRecord[]>(() => {
     try {
       const stored = localStorage.getItem(`${STORAGE_KEY_PREFIX}_bank_profits`);
@@ -362,30 +379,12 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
   });
 
   // Dynamically calculate total paid subscriptions across active months from the Ledger
-  const totalPaidSubscriptions = useMemo(() => {
-    const activeMonthKeys = new Set(months.map(m => m.key));
-    return monthlyPayments
-      .filter(p => activeMonthKeys.has(p.monthKey))
-      .reduce((sum, p) => {
-        if (p.status === 'Paid') {
-          return sum + (Number(p.amountPaid) > 0 ? Number(p.amountPaid) : Number(p.amountExpected) || 0);
-        }
-        return sum + (Number(p.amountPaid) || 0);
-      }, 0);
-  }, [monthlyPayments, months]);
-
-  // Dynamically calculate total realized bank profits
-  const totalBankProfits = useMemo(() => {
-    return bankProfits.reduce((sum, b) => sum + (Number(b.amount) || 0), 0);
-  }, [bankProfits]);
-
-  // Total Treasury is dynamic: sum of all member paid subscriptions in ledger + bank profits + manual adjustment (if any)
-  const totalClubFunds = useMemo(() => {
-    return totalPaidSubscriptions + totalBankProfits + (manualFundsAdjustment || 0);
-  }, [totalPaidSubscriptions, totalBankProfits, manualFundsAdjustment]);
+  const treasury = useMemo(() => calculateTreasuryTotals(monthlyPayments, months.map(m => m.key), bankProfits, manualFundsAdjustment),
+    [monthlyPayments, months, bankProfits, manualFundsAdjustment]);
+  const { totalMemberContributions: totalPaidSubscriptions, totalAdditionalIncome, totalClubFunds } = treasury;
 
   const setTotalClubFunds = (val: number) => {
-    const adjustment = val - (totalPaidSubscriptions + totalBankProfits);
+    const adjustment = val - (totalPaidSubscriptions + totalAdditionalIncome);
     setManualFundsAdjustment(adjustment);
     try {
       localStorage.setItem(`${STORAGE_KEY_PREFIX}_fundsAdjustment`, String(adjustment));
@@ -467,20 +466,15 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   });
 
-  // 1. Initial Cloud Firestore Seed Check on App Mount
+  // Preserve the existing admin account cleanup while preventing automatic financial seeding.
   useEffect(() => {
-    seedFirestoreIfEmpty().catch(() => {});
-    // Purge legacy mock claims if any exist in cloud
-    deleteDoc(doc(db, 'pendingClaims', 'claim_1')).catch(() => {});
-    deleteDoc(doc(db, 'pendingClaims', 'claim_2')).catch(() => {});
-    // Purge legacy admin accounts so only the 2 authorized credentials remain
     deleteDoc(doc(db, 'adminUsers', 'admin_president')).catch(() => {});
     deleteDoc(doc(db, 'adminUsers', 'admin_secretary')).catch(() => {});
     deleteDoc(doc(db, 'adminUsers', 'admin_1')).catch(() => {});
     deleteDoc(doc(db, 'adminUsers', 'admin_2')).catch(() => {});
   }, []);
 
-  // 2. Real-time Cloud Firestore Listeners (Ensures all data is saved and synced with cloud)
+  // Real-time Cloud Firestore listeners
   useEffect(() => {
     const handleSnapshotErr = (name: string) => (err: any) => {
       if (
@@ -548,9 +542,7 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const cloudClaims: PendingPaymentClaim[] = [];
       snapshot.forEach(docSnap => {
         const claim = docSnap.data() as PendingPaymentClaim;
-        if (claim.id === 'claim_1' || claim.id === 'claim_2') {
-          deleteDoc(doc(db, 'pendingClaims', claim.id)).catch(() => {});
-        } else {
+        if (claim.id !== 'claim_1' && claim.id !== 'claim_2') {
           cloudClaims.push(claim);
         }
       });
@@ -566,7 +558,7 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (adm.email && allowedEmails.includes(adm.email.toLowerCase())) {
             cloudAdmins.push(adm);
           } else {
-            // Delete rogue document from cloud to ensure exactly 2 credentials
+            // Existing admin-account cleanup behavior, unchanged.
             deleteDoc(doc(db, 'adminUsers', docSnap.id)).catch(() => {});
           }
         });
@@ -582,20 +574,8 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const unsubBankProfits = onSnapshot(collection(db, 'bankProfits'), snapshot => {
       const cloudProfits: BankProfitRecord[] = [];
-      snapshot.forEach(docSnap => cloudProfits.push(docSnap.data() as BankProfitRecord));
-      if (!snapshot.empty) {
-        setBankProfits(cloudProfits);
-      } else {
-        const stored = localStorage.getItem(`${STORAGE_KEY_PREFIX}_bank_profits`);
-        if (stored) {
-          try {
-            const parsed = JSON.parse(stored);
-            if (Array.isArray(parsed) && parsed.length === 0) {
-              setBankProfits([]);
-            }
-          } catch {}
-        }
-      }
+      snapshot.forEach(docSnap => cloudProfits.push({ ...(docSnap.data() as BankProfitRecord), id: docSnap.id }));
+      setBankProfits(cloudProfits);
     }, handleSnapshotErr('bankProfits'));
 
     const unsubConfig = onSnapshot(doc(db, 'clubConfig', 'main'), docSnap => {
@@ -632,6 +612,7 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
       localStorage.setItem(`${STORAGE_KEY_PREFIX}_font`, fontFamily);
       localStorage.setItem(`${STORAGE_KEY_PREFIX}_months`, JSON.stringify(months));
       localStorage.setItem(`${STORAGE_KEY_PREFIX}_totalFunds`, String(totalClubFunds));
+      localStorage.setItem(`${STORAGE_KEY_PREFIX}_fundsAdjustment`, String(manualFundsAdjustment));
       localStorage.setItem(`${STORAGE_KEY_PREFIX}_members`, JSON.stringify(members));
       localStorage.setItem(`${STORAGE_KEY_PREFIX}_payments`, JSON.stringify(monthlyPayments));
       localStorage.setItem(`${STORAGE_KEY_PREFIX}_investments`, JSON.stringify(investments));
@@ -649,7 +630,7 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (e) {
       console.error('Failed to sync to localStorage', e);
     }
-  }, [theme, fontFamily, months, totalClubFunds, members, monthlyPayments, investments, investment, expenses, feeCollections, bankProfits, adminUsers, pendingClaims, currentAdminUser, currentMemberUser]);
+  }, [theme, fontFamily, months, totalClubFunds, manualFundsAdjustment, members, monthlyPayments, investments, investment, expenses, feeCollections, bankProfits, adminUsers, pendingClaims, currentAdminUser, currentMemberUser]);
 
   // Recalculate member pending months, total due amounts, and registrationFeePaid based on monthlyPayments & feeCollections
   // Dues cutoff is strictly the current calendar month; future months NEVER generate dues!
@@ -697,7 +678,7 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       return changed ? updated : prevMembers;
     });
-  }, [monthlyPayments, feeCollections, currentMemberUser]);
+  }, [monthlyPayments, feeCollections, currentMemberUser, currentMonthKey]);
 
   // Strict guard: Inactive members are immediately logged out if active in session
   useEffect(() => {
@@ -731,8 +712,6 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const investedFunds = activeInvestments.reduce((sum, inv) => sum + inv.principalAmount, 0);
     const expectedVentureProfit = activeInvestments.reduce((sum, inv) => sum + inv.expectedProfit, 0);
     const liquidReserves = Math.max(0, totalClubFunds - investedFunds); // remaining in account
-    const totalBankProfits = bankProfits.reduce((sum, b) => sum + b.amount, 0);
-
     return {
       totalClubFunds,
       investedFunds,
@@ -744,9 +723,12 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
       totalFeeCollected,
       totalExpenses,
       feeBalance,
-      totalBankProfits,
+      totalBankProfits: totalAdditionalIncome,
+      totalMemberContributions: totalPaidSubscriptions,
+      totalAdditionalIncome,
+      manualFundsAdjustment,
     };
-  }, [totalClubFunds, members, investments, expenses, feeCollections, bankProfits]);
+  }, [totalClubFunds, members, investments, expenses, feeCollections, totalAdditionalIncome, totalPaidSubscriptions, manualFundsAdjustment]);
 
   const recordPayment = (
     paymentId: string, 
@@ -762,32 +744,32 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   ) => {
     const processTime = new Date().toISOString();
-    let savedPayment: MonthlyPayment | null = null;
-
-    setMonthlyPayments(prev => {
-      const idx = prev.findIndex(p => p.id === paymentId || (details.memberId && details.monthKey && p.memberId === details.memberId && p.monthKey === details.monthKey));
+    let savedPayment: MonthlyPayment;
+    const idx = monthlyPayments.findIndex(p => p.id === paymentId || (details.memberId && details.monthKey && p.memberId === details.memberId && p.monthKey === details.monthKey));
+    const isUnpaid = details.status === 'Due' || (details.status === 'Waived' && details.amountPaid <= 0);
       if (idx >= 0) {
-        const p = prev[idx];
+        const p = monthlyPayments[idx];
         const finalPaid = details.amountPaid !== undefined && details.amountPaid > 0
           ? details.amountPaid
           : (details.status === 'Paid' ? p.amountExpected : (details.amountPaid || 0));
 
         const updated: MonthlyPayment = {
           ...p,
-          amountPaid: finalPaid,
-          paymentDate: details.paymentDate,
-          payment_date: details.paymentDate,
-          processedAt: processTime,
-          processed_at: processTime,
-          paymentMethod: details.paymentMethod,
+          amountPaid: isUnpaid ? 0 : finalPaid,
+          paymentDate: isUnpaid ? undefined : details.paymentDate,
+          payment_date: isUnpaid ? undefined : details.paymentDate,
+          processedAt: isUnpaid ? undefined : processTime,
+          processed_at: isUnpaid ? undefined : processTime,
+          paymentMethod: isUnpaid ? undefined : details.paymentMethod,
           status: details.status,
-          notes: details.notes || p.notes,
-          receiptNumber: p.receiptNumber || `MC-${p.monthKey}-${Date.now().toString().slice(-4)}`,
+          notes: isUnpaid ? details.notes || undefined : details.notes || p.notes,
+          trxId: isUnpaid ? undefined : p.trxId,
+          receiptNumber: isUnpaid ? undefined : (p.receiptNumber || `MC-${p.monthKey}-${Date.now().toString().slice(-4)}`),
         };
         savedPayment = updated;
-        const newArr = [...prev];
+        const newArr = [...monthlyPayments];
         newArr[idx] = updated;
-        return newArr;
+        setMonthlyPayments(newArr);
       } else {
         const parts = paymentId.split('-');
         const memberId = details.memberId || (parts.length >= 2 ? parts[1] : '');
@@ -808,24 +790,20 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
           monthLabel: monthInfo?.label || monthKey,
           units,
           amountExpected,
-          amountPaid: finalPaid,
-          paymentDate: details.paymentDate,
-          payment_date: details.paymentDate,
-          processedAt: processTime,
-          processed_at: processTime,
-          paymentMethod: details.paymentMethod,
+          amountPaid: isUnpaid ? 0 : finalPaid,
+          paymentDate: isUnpaid ? undefined : details.paymentDate,
+          payment_date: isUnpaid ? undefined : details.paymentDate,
+          processedAt: isUnpaid ? undefined : processTime,
+          processed_at: isUnpaid ? undefined : processTime,
+          paymentMethod: isUnpaid ? undefined : details.paymentMethod,
           status: details.status,
           notes: details.notes,
-          receiptNumber: `MC-${monthKey}-${Date.now().toString().slice(-4)}`,
+          receiptNumber: isUnpaid ? undefined : `MC-${monthKey}-${Date.now().toString().slice(-4)}`,
         };
         savedPayment = created;
-        return [...prev, created];
+        setMonthlyPayments(prev => [...prev.filter(p => p.id !== paymentId), created]);
       }
-    });
-
-    if (savedPayment) {
-      cloudSavePayment(savedPayment);
-    }
+    cloudSavePayment(savedPayment);
   };
 
   const quickCollectDue = (memberId: string, monthKey: MonthKey, paymentMethod?: PaymentMethod) => {
@@ -835,7 +813,7 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setMonthlyPayments(prev => 
       prev.map(p => {
         if (p.memberId === memberId && p.monthKey === monthKey) {
-          const actualPaymentDate = p.paymentDate || todayStr;
+          const actualPaymentDate = todayStr;
           const updated: MonthlyPayment = {
             ...p,
             amountPaid: p.amountExpected,
@@ -866,7 +844,7 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
       prev.map(p => {
         // Collect only dues up to the current calendar month that are not yet paid
         if (p.memberId === memberId && p.monthKey <= currentKey && p.status === 'Due') {
-          const actualPaymentDate = p.paymentDate || todayStr;
+          const actualPaymentDate = todayStr;
           const updated: MonthlyPayment = {
             ...p,
             amountPaid: p.amountExpected,
@@ -898,7 +876,7 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setMonthlyPayments(prev => 
       prev.map(p => {
         if (p.monthKey === monthKey && p.status === 'Due') {
-          const actualPaymentDate = p.paymentDate || todayStr;
+          const actualPaymentDate = todayStr;
           const updated: MonthlyPayment = {
             ...p,
             amountPaid: p.amountExpected,
@@ -932,7 +910,7 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return prev.map(p => {
         if (p.memberId === memberId && p.status === 'Due' && paidCount < count) {
           paidCount++;
-          const actualPaymentDate = p.paymentDate || todayStr;
+          const actualPaymentDate = todayStr;
           const updated: MonthlyPayment = {
             ...p,
             amountPaid: p.amountExpected,
@@ -956,7 +934,7 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   // Dynamically add a new calendar month
-  const addMonth = (targetKey?: string) => {
+  const addMonth = async (targetKey?: string) => {
     let newKey = targetKey;
     if (!newKey) {
       // Find the last month and compute the next calendar month
@@ -976,16 +954,17 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     if (months.some(m => m.key === newKey)) {
-      return; // Already exists
+      return false; // Already exists
     }
 
     const monthInfo = formatMonthKeyToInfo(newKey);
     const updatedMonths = [...months, monthInfo].sort((a, b) => a.key.localeCompare(b.key));
-    setMonths(updatedMonths);
 
     // Create payment slots for all active members with status strictly 'Due' and amountPaid: 0
+    const existingSlots = new Set(monthlyPayments.filter(p => p.monthKey === newKey).map(p => p.memberId));
     const newPayments: MonthlyPayment[] = members
       .filter(m => m.status === 'Active')
+      .filter(m => !existingSlots.has(m.id))
       .map(mem => ({
         id: `p-${mem.id}-${newKey}`,
         memberId: mem.id,
@@ -1003,18 +982,16 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
         notes: undefined,
       }));
 
-    // Filter out any stale/existing payment records for this month to guarantee all members are 'Due'
-    const paymentsWithoutNewKey = monthlyPayments.filter(p => p.monthKey !== newKey);
-    const updatedPayments = [...paymentsWithoutNewKey, ...newPayments];
-    setMonthlyPayments(updatedPayments);
+    // Preserve any existing advance payments or historical records for this month.
+    const saved = await cloudAddMonth(totalClubFunds, updatedMonths, manualFundsAdjustment, newPayments);
+    if (!saved) return false;
+    setMonths(updatedMonths);
+    setMonthlyPayments(prev => [...prev, ...newPayments.filter(p => !prev.some(existing => existing.id === p.id))]);
 
-    // Persist to Cloud Firestore & localStorage
-    cloudSaveConfig(totalClubFunds, updatedMonths);
-    cloudBatchSavePayments(newPayments);
     try {
       localStorage.setItem(`${STORAGE_KEY_PREFIX}_months`, JSON.stringify(updatedMonths));
-      localStorage.setItem(`${STORAGE_KEY_PREFIX}_payments`, JSON.stringify(updatedPayments));
     } catch {}
+    return true;
   };
 
   const deleteMonth = (monthKey: MonthKey) => {
@@ -1022,7 +999,7 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setMonths(updatedMonths);
     const updatedPayments = monthlyPayments.filter(p => p.monthKey !== monthKey);
     setMonthlyPayments(updatedPayments);
-    cloudSaveConfig(totalClubFunds, updatedMonths);
+    cloudSaveConfig(totalClubFunds, updatedMonths, manualFundsAdjustment);
     const memberIds = members.map(m => m.id);
     cloudDeletePaymentsForMonth(monthKey, memberIds);
     try {
@@ -1031,35 +1008,32 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch {}
   };
 
-  const addBankProfit = (profitData: Omit<BankProfitRecord, 'id' | 'createdAt'>) => {
+  const addBankProfit = async (profitData: Omit<BankProfitRecord, 'id' | 'createdAt'>, entryId = `income-${crypto.randomUUID()}`) => {
+    if (!Number.isFinite(profitData.amount) || profitData.amount <= 0) return false;
     const newProfit: BankProfitRecord = {
       ...profitData,
-      id: `bp-${Date.now()}`,
+      id: entryId,
       createdAt: new Date().toISOString(),
     };
-    setBankProfits(prev => [newProfit, ...prev]);
-    cloudSaveBankProfit(newProfit);
+    const saved = await cloudSaveBankProfit(newProfit);
+    if (saved) setBankProfits(prev => [newProfit, ...prev.filter(p => p.id !== entryId)]);
+    return saved;
   };
 
-  const updateBankProfit = (id: string, updates: Partial<BankProfitRecord>) => {
-    setBankProfits(prev => {
-      const existing = prev.find(p => p.id === id);
-      if (!existing) return prev;
-      const updated = { ...existing, ...updates };
-      cloudSaveBankProfit(updated);
-      return prev.map(p => p.id === id ? updated : p);
-    });
+  const updateBankProfit = async (id: string, updates: Partial<BankProfitRecord>) => {
+    const existing = bankProfits.find(p => p.id === id);
+    if (!existing) return false;
+    if (updates.amount !== undefined && (!Number.isFinite(updates.amount) || updates.amount <= 0)) return false;
+    const updated = { ...existing, ...updates, id };
+    const saved = await cloudSaveBankProfit(updated);
+    if (saved) setBankProfits(prev => prev.map(p => p.id === id ? updated : p));
+    return saved;
   };
 
-  const deleteBankProfit = (id: string) => {
-    setBankProfits(prev => {
-      const updated = prev.filter(p => p.id !== id);
-      try {
-        localStorage.setItem(`${STORAGE_KEY_PREFIX}_bank_profits`, JSON.stringify(updated));
-      } catch {}
-      return updated;
-    });
-    cloudDeleteBankProfit(id);
+  const deleteBankProfit = async (id: string) => {
+    const removed = await cloudDeleteBankProfit(id);
+    if (removed) setBankProfits(prev => prev.filter(p => p.id !== id));
+    return removed;
   };
 
   const addMember = (newMemData: Omit<Member, 'id' | 'monthsPending' | 'totalDueAmount'>) => {
@@ -1320,8 +1294,9 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
       .filter(f => f.memberId === memberId && f.status === 'Paid')
       .reduce((sum, f) => sum + f.feeAmount, 0);
     const remainingDue = Math.max(0, expectedFee - paidSoFar);
+    if (remainingDue <= 0) return;
 
-    const feeAmount = details?.feeAmount !== undefined ? details.feeAmount : (remainingDue > 0 ? remainingDue : expectedFee);
+    const feeAmount = details?.feeAmount !== undefined ? details.feeAmount : remainingDue;
     const date = details?.date || new Date().toISOString().split('T')[0];
     const paymentMethod = details?.paymentMethod || 'Cash';
     const purpose = details?.purpose || 'Registration & Admin Fee (100/unit)';
@@ -1384,7 +1359,7 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setFeeCollections(collections);
   };
 
-  const setMemberFeeStatus = (
+  const setMemberFeeStatus = async (
     memberId: string, 
     status: 'Paid' | 'Unpaid', 
     details?: { feeAmount?: number; date?: string; paymentMethod?: PaymentMethod; notes?: string }
@@ -1394,8 +1369,6 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (status === 'Unpaid') {
       // Remove all active fee collections for this member
       const toDelete = feeCollections.filter(f => f.memberId === memberId);
-      toDelete.forEach(f => cloudDeleteFee(f.id));
-      cloudDeleteFee(`fee-${memberId}`);
 
       // Save explicit Unpaid record so cloud sync knows this member was intentionally set to Unpaid
       const unpaidRecord: FeeCollection = {
@@ -1408,9 +1381,8 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
         status: 'Unpaid',
         purpose: 'Registration & Admin Fee (100/unit)',
       };
-      cloudSaveFee(unpaidRecord);
-
-      setFeeCollections(prev => prev.filter(f => f.memberId !== memberId));
+      const saved = await cloudReplaceMemberFee(memberId, toDelete.map(f => f.id), unpaidRecord);
+      if (saved) setFeeCollections(prev => prev.filter(f => f.memberId !== memberId));
     } else {
       // Mark as Paid
       if (!member) return;
@@ -1421,7 +1393,6 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const notes = details?.notes || `Registration & Admin Fee (100/unit)`;
 
       const existingFees = feeCollections.filter(f => f.memberId === memberId);
-      existingFees.forEach(f => cloudDeleteFee(f.id));
 
       const deterministicId = `fee-${member.id}`;
       const newRecord: FeeCollection = {
@@ -1438,11 +1409,8 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
         receiptNo: `FEE-${Date.now().toString().slice(-4)}`,
       };
 
-      setFeeCollections(prev => {
-        const withoutMember = prev.filter(f => f.memberId !== memberId);
-        return [newRecord, ...withoutMember];
-      });
-      cloudSaveFee(newRecord);
+      const saved = await cloudReplaceMemberFee(memberId, existingFees.map(f => f.id), newRecord);
+      if (saved) setFeeCollections(prev => [newRecord, ...prev.filter(f => f.memberId !== memberId)]);
     }
   };
 
@@ -1526,6 +1494,17 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
       prev.map(p => {
         if (p.id === paymentId) {
           const updated = { ...p, ...updates };
+          if (updates.status === 'Due') updated.amountPaid = 0;
+          if (updated.status === 'Due' && updated.amountPaid <= 0) {
+            updated.paymentDate = undefined;
+            updated.payment_date = undefined;
+            updated.processedAt = undefined;
+            updated.processed_at = undefined;
+            updated.paymentMethod = undefined;
+            updated.trxId = undefined;
+            updated.receiptNumber = undefined;
+            if (p.status !== 'Due' && updates.notes === undefined) updated.notes = undefined;
+          }
           cloudSavePayment(updated);
           return updated;
         }
@@ -1801,9 +1780,9 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
     cloudSaveClaim(newClaim);
   };
 
-  const approvePaymentClaim = (claimId: string) => {
+  const approvePaymentClaim = async (claimId: string) => {
     const claim = pendingClaims.find(c => c.id === claimId);
-    if (!claim) return;
+    if (!claim || claim.status !== 'Pending') return;
 
     // Preserve the actual date the member submitted/paid the deposit!
     const memberPaymentDate = claim.paymentDate || claim.payment_date || (claim.submittedAt ? claim.submittedAt.split('T')[0] : getCurrentDateString());
@@ -1822,13 +1801,13 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const perMonthAmount = targetMonths.length > 0 ? Math.round(claim.amount / targetMonths.length) : claim.amount;
 
     // 1. Update/Add matching MonthlyPayment records with actual member payment date for all target months
-    setMonthlyPayments(prev => {
-      let updated = [...prev];
+    const changedPayments: MonthlyPayment[] = [];
+    const updatedPayments = [...monthlyPayments];
       targetMonths.forEach(target => {
-        const idx = updated.findIndex(p => p.memberId === claim.memberId && p.monthKey === target.monthKey);
+        const idx = updatedPayments.findIndex(p => p.memberId === claim.memberId && p.monthKey === target.monthKey);
         if (idx !== -1) {
           const updatedRecord = {
-            ...updated[idx],
+            ...updatedPayments[idx],
             amountPaid: perMonthAmount,
             status: 'Paid' as const,
             paymentDate: memberPaymentDate,
@@ -1836,11 +1815,11 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
             processedAt: adminProcessingTime,
             processed_at: adminProcessingTime,
             paymentMethod: claim.paymentMethod,
-            trxId: claim.trxId || updated[idx].trxId,
-            notes: claim.notes ? `[Verified Member Payment]: ${claim.notes}` : updated[idx].notes,
+            trxId: claim.trxId || updatedPayments[idx].trxId,
+            notes: claim.notes ? `[Verified Member Payment]: ${claim.notes}` : updatedPayments[idx].notes,
           };
-          updated[idx] = updatedRecord;
-          cloudSavePayment(updatedRecord);
+          updatedPayments[idx] = updatedRecord;
+          changedPayments.push(updatedRecord);
         } else {
           const newRecord: MonthlyPayment = {
             id: `p-${claim.memberId}-${target.monthKey}`,
@@ -1860,12 +1839,10 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
             trxId: claim.trxId,
             notes: claim.notes ? `[Verified Member Payment]: ${claim.notes}` : undefined,
           };
-          updated.push(newRecord);
-          cloudSavePayment(newRecord);
+          updatedPayments.push(newRecord);
+          changedPayments.push(newRecord);
         }
       });
-      return updated;
-    });
 
     // 2. Mark claim as Approved and record processing timestamp
     const updatedClaim: PendingPaymentClaim = {
@@ -1876,8 +1853,10 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
       processedAt: adminProcessingTime,
       processed_at: adminProcessingTime,
     };
+    const saved = await cloudApprovePaymentClaim(updatedClaim, changedPayments);
+    if (!saved) return;
+    setMonthlyPayments(updatedPayments);
     setPendingClaims(prev => prev.map(c => c.id === claimId ? updatedClaim : c));
-    cloudSaveClaim(updatedClaim);
   };
 
   const rejectPaymentClaim = (claimId: string, reason?: string) => {
@@ -1937,6 +1916,7 @@ export const ClubProvider: React.FC<{ children: React.ReactNode }> = ({ children
         updateBankProfit,
         deleteBankProfit,
         months,
+        currentMonthKey,
         addMonth,
         deleteMonth,
         batchMarkMonthPaid,
